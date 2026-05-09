@@ -76,4 +76,19 @@ Run all tests and confirm they pass before marking this step complete.
 
 ## Summary
 
-_To be completed when this step is implemented._
+Implemented `src/runner.ts` and `src/test/runner.test.ts`.
+
+**Files added:**
+- `src/runner.ts` — exports `runCommands`, `defaultSpawner`, `resolveCommandLogPath`, `toLocalISOString`, the DI types (`Spawner`, `SpawnedProc`, `ISpawnerOptions`, `RunCommandsOptions`, `RunResult`), the audit-log seam (`IAuditLogger`, `IAuditCommandStartedRecord`, `IAuditCommandResultRecord`, `CommandOutcome`, `NullAuditLogger`).
+- `src/test/runner.test.ts` — integration tests for `runCommands` (8 cases: parallel execution, success state update with sorted `matchedFiles`, log file structure with `[OUT]`/`[ERR]` tagging + header + footer, residue flush without trailing newline, non-zero exit, gate-skipped command, per-command timeout, ENOENT spawn) plus direct unit tests for every function in `runner.ts`: `resolveCommandLogPath`, `toLocalISOString`, `safeKill`, `pipeStreamWithTag`, `endWriteStream`, `defaultSpawner`, `NullAuditLogger`, `runOneCommand`. 392 total project tests pass.
+
+**Key decisions / divergences:**
+- The audit-logger seam (`IAuditLogger` + `NullAuditLogger`) is defined inline in `runner.ts` rather than in a separate `audit.ts`, since step 15 will own the canonical audit-log module and refactor as needed.
+- `resolveCommandLogPath` takes `(logBaseDir, startedAt, commandKey)` (3 args) instead of the spec's 4-arg form; the 4th `startedAt.getTime()` argument was redundant with `startedAt` itself.
+- The recording-spawner test helper exposes `nextSpawn(): Promise<IStubProc>` so tests await the next spawn deterministically (the gate's async `aggregateHash` file read otherwise races against `setImmediate`).
+- `runOneCommand` writes a `> error: <message>` line to the log footer when `proc.exited` rejects (non-timeout error path); the spec mentions "the log file's footer records the error" but does not pin the literal.
+- The internal helpers `pipeStreamWithTag`, `endWriteStream`, `safeKill`, and `runOneCommand` are exported so each can be directly unit tested per the project rule "Every function should be directly unit tested." `defaultSpawner` is exercised against real `sh` so its ENOENT, exit-code, and stdio-piping behaviour are verified end-to-end.
+
+**Deferred:**
+- Smoke-test coverage (`bun run smoke`): the `scripts/smoke-tests.sh` script is created in step 14, so end-to-end smoke verification is not run yet. Step 12's stated verification (`bun run compile` + `bun run test`) passes.
+- The audit-log seam currently uses `NullAuditLogger` by default; step 15 will provide the production logger and update the Stop-hook entry point in step 13 to inject it.
