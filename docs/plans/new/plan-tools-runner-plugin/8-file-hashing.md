@@ -47,4 +47,17 @@ Run all tests and confirm they pass before marking this step complete.
 
 ## Summary
 
-_To be completed when this step is implemented._
+Implemented file hashing with caching as specified.
+
+**Files added**:
+- `src/hash.ts` — exports `hashFileWithCache` and `aggregateHash`. Uses `node:fs/promises` (`fs.stat`, `fs.readFile`) and `node:crypto` (`createHash("sha256")`). Cache key is `file.absPath`; hit requires both `mtimeMs` and `size` to match. ENOENT on stat returns the literal `"<missing>"` sentinel and leaves the cache untouched. `aggregateHash` sorts by `absPath`, hashes per-file in parallel via `Promise.all`, then concatenates `${absPath}\0${perFileHash}\n` lines through a single SHA-256 stream and returns the hex digest. Empty file list returns the SHA-256 of the empty string (verified by test against an independently computed reference).
+- `src/test/hash.test.ts` — 8 tests covering: stable hex digest for fixed contents, hex format check, cache hit when (mtimeMs, size) match, cache miss when mtimeMs differs (via `fs.utimes`), missing-file sentinel + cache untouched, empty-list aggregate, order-independence, and aggregate-changes-when-content-changes.
+
+**Key decisions**:
+- The `MISSING_FILE_SENTINEL` is held as a module-level `const` rather than inlining the literal so future references stay in sync with the documented contract.
+- Sort uses an explicit comparator (not `.sort()` default) so behavior is locale-independent and matches the `<` / `>` byte-wise ordering implied by the spec.
+- Cache writes inside `aggregateHash` happen via `Promise.all` parallel `hashFileWithCache` calls; per the step doc this is safe because each key writes a deterministic value derived from the file on disk.
+
+**Verification**: `bun run compile` passes; `bun run test` passes (242/242, including 8 new tests). Smoke tests are deferred (step 14 — `scripts/smoke-tests.sh` not yet authored).
+
+**Deferred / skipped**: Nothing — full step scope landed.
