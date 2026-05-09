@@ -844,7 +844,7 @@ EOF
         fail_dump "$stderr_file"
     fi
     local log_files
-    log_files=$(find "$sandbox/.claude/tools-runner-log" -type f -name '*.log' 2>/dev/null || true)
+    log_files=$(find "$sandbox/.claude/tools-runner-log" -mindepth 4 -type f -name '*.log' 2>/dev/null || true)
     if [ -z "$log_files" ]; then
         fail_assert "no per-command log file found under .claude/tools-runner-log"
     else

@@ -54,4 +54,27 @@ Run all tests and confirm they pass before marking this step complete.
 
 ## Summary
 
-_To be completed when this step is implemented._
+Audited the four shipped doc files against the implementation and made small accuracy fixes; uncovered and fixed one latent smoke-test bug introduced by step 15.
+
+**Doc fixes (3-line diff total):**
+
+- `docs/CONFIGURATION.md`: `paths` are matched against scope-relative paths, not "repo-relative" — corrected the schema-reference wording. Example 1's prose claimed "for the next 30 seconds" but the example doesn't override `cooldown`, so the default `1m` applies — corrected to "for the next minute (the default `cooldown`)".
+- `docs/DEVELOPMENT.md`: troubleshooting hint "your glob doesn't match the repo-relative POSIX path" updated to "scope-relative POSIX path (relative to the config file's directory)".
+- `README.md`, `docs/HOW_IT_WORKS.md`: re-checked end-to-end; no changes needed. The architecture diagram, four-branch gate decision table (matches `src/gate.ts` exactly), three-Stop sequence, and literal state-file YAML example (verbatim camelCase TS field names from `src/types.ts`) are all current.
+
+**Cross-cutting checks (all pass):**
+
+- All 9 fenced YAML examples across the four docs parse via the `yaml` package.
+- All 11 documented stdout/stderr literals appear verbatim in `src/`.
+- The implementation reads zero `TOOLS_RUNNER_*` env vars (only `HOME`, `CLAUDE_PROJECT_DIR`, `NODE_ENV`).
+- All 7 relative `*.md` links resolve.
+- Every fenced code block is closed (even delimiter counts in every doc).
+
+**Latent bug fix in `scripts/smoke-tests.sh` (scenario 16):**
+
+- Step 15 added the audit-log files at `<HH>.log` as siblings of the per-command log subdir `<HH>/`. Scenario 16's `find ... -name '*.log' | head -n1` previously matched only per-command logs; post-step-15 the audit log was found first on this filesystem and the `[OUT]/[ERR]` assertion failed against the wrong file.
+- Fixed by adding `-mindepth 4` so the find only matches per-command logs (depth 4 from `tools-runner-log/`), not audit logs (depth 3). All 21 smoke scenarios pass after the fix.
+
+**Verification:** `bun run compile` PASS · `bun run test` PASS (464) · `bun run smoke` PASS (21/21) · `bun run hook-smoke` PASS (4/4).
+
+Nothing deferred.

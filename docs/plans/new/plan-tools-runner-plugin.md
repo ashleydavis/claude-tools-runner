@@ -17,7 +17,7 @@
 - [x] 13. Stop hook entry point: `plan-tools-runner-plugin/13-stop-hook.md`
 - [x] 14. Smoke tests (bundle integrity + end-to-end behavior): `plan-tools-runner-plugin/14-smoke-tests.md`
 - [x] 15. Audit log: `plan-tools-runner-plugin/15-audit-log.md`
-- [ ] 16. Update documentation: `plan-tools-runner-plugin/16-update-documentation.md`
+- [x] 16. Update documentation: `plan-tools-runner-plugin/16-update-documentation.md`
 - [ ] 19. GitHub Workflows (CI + publish): `plan-tools-runner-plugin/19-github-workflows.md`
 
 ## Overview

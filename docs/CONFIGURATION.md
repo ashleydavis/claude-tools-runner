@@ -14,7 +14,7 @@ All locations are optional. If multiple exist, their triggers all run.
 Each YAML file has one top-level key: `triggers`.
 
 - **`triggers`**: list, required (may be empty). An empty list is valid (the file is in place but quiet).
-  - **`paths`**: list of strings, optional (may be missing or empty). [picomatch](https://github.com/micromatch/picomatch) glob patterns applied to repo-relative POSIX paths. A trigger fires if any changed file matches any pattern. An empty or absent `paths` list is not an error: the trigger simply never fires. Negations (`!`) exclude. Brace expansion (`*.{ts,tsx}`) is supported. Case-sensitive.
+  - **`paths`**: list of strings, optional (may be missing or empty). [picomatch](https://github.com/micromatch/picomatch) glob patterns applied to POSIX paths relative to the config file's directory (`scopeDir`). A trigger fires if any changed file matches any pattern. An empty or absent `paths` list is not an error: the trigger simply never fires. Negations (`!`) exclude. Brace expansion (`*.{ts,tsx}`) is supported. Case-sensitive.
   - **`group_by`**: string, optional. A glob pattern that defines a "group" directory per matched file. When set, files whose paths share the same `group_by` match are treated as one group, and the `${{group_dir}}` variable becomes available in `run` and `cwd`. See "Grouping" below. Example: `packages/*/` (per-package), `apps/*/` (per-app), `*/` (per-top-level-directory). The trailing `/` is conventional shorthand for "directory" and optional: `packages/*` works identically.
   - **`commands`**: list, required (≥ 1). One or more commands to run when the trigger fires.
     - **`run`**: string, required. Shell command line, executed via `sh -c`. Supports variables (see below).
@@ -112,7 +112,7 @@ triggers:
       - run: bun run test
 ```
 
-Whenever any `.ts` file under `src/` shows up in `git status`, `bun run test` runs once. For the next 30 seconds, subsequent Stop events skip with `in cooldown`. After that, if the matched files are unchanged the run is skipped with `no file changes since last successful run`; if they've changed it runs again.
+Whenever any `.ts` file under `src/` shows up in `git status`, `bun run test` runs once. For the next minute (the default `cooldown`), subsequent Stop events skip with `in cooldown`. After that, if the matched files are unchanged the run is skipped with `no file changes since last successful run`; if they've changed it runs again.
 
 ### 2. Per-file linter using `${{file_path}}`
 
