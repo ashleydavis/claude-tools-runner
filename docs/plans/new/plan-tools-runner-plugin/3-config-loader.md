@@ -84,4 +84,24 @@ Run all tests and confirm they pass before marking this step complete.
 
 ## Summary
 
-_To be completed when this step is implemented._
+Delivered the per-file YAML config primitive plus the duration-string parser used to normalize cooldown/timeout values.
+
+**Files added:**
+- `src/duration.ts` — `parseDuration(input, fieldName)` accepting the regex-validated forms `"<digits>"`, `"<digits>s|m|h"` and rejecting non-strings, decimals, negatives, unsupported units, empty/whitespace strings. Includes the field name in every error message so cooldown vs timeout failures are distinguishable.
+- `src/config.ts` — `loadConfigFile(filePath)`, `scanConfigFiles(projectDir)`, `homeConfigPath()`. Loader uses `YAML.parseDocument(text, { keepSourceTokens: true })`, validates the schema (only `triggers` allowed at top-level, every trigger needs at least one command, every command needs a non-empty `run`, `group_by` must be a non-empty string when present), fills defaults (`cwd: "${{project}}"`, `cooldown: 60`, `timeout: 300`), and captures each trigger's 1-based source line by walking `doc.contents.items` to find the `triggers` seq and reading `range[0]` on each item, then converting that byte offset to a line number with a single linear scan over the source text. Empty docs and `triggers: []` round-trip to `{ triggers: [] }`.
+- `src/test/duration.test.ts` — 19 tests covering happy paths, all rejection categories, and field-name distinguishability.
+- `src/test/config.test.ts` — 24 tests covering null-on-missing-file, default fill-in, duration parsing for cooldown/timeout, all validation errors, empty/empty-list documents, optional/empty `paths`, unknown top-level keys, `group_by` happy/empty/non-string paths, source-line capture across explicit positions and across leading comments, `homeConfigPath` with HOME set/unset, and `scanConfigFiles` against a temp tree (sorted output, node_modules skip, dot-prefix skip, empty tree).
+
+**Key decisions / divergences:**
+- `parseDuration` is typed as `(input: any, fieldName: string)` rather than `(input: unknown, ...)` because CLAUDE.md bans the `unknown` type. Using `any` at this validation boundary preserves the spec's intent (accept anything, validate at runtime).
+- `YAML.parseDocument` `range[0]` was empirically verified to point at the first key character of a block-sequence trigger (e.g. `p` of `paths:`). The line counter handles missing/non-numeric ranges by defaulting to line `1`, satisfying the "synthetic empty list" clause.
+- `scanConfigFiles` propagates `readdir` errors but explicitly catches `ENOENT` from the `fs.stat` existence check (per the project's "fs.stat + ENOENT catch" convention) so a `.claude/` directory without a `tools-runner.yaml` doesn't crash the scan.
+
+**Deferred / not done in this step:**
+- The `FileLayer` wrapper and `TriggerRegistry` that turn one or more loaded `Config` objects into compiled commands (step 4).
+- Smoke-test coverage of `loadConfigFile` and `scanConfigFiles` is deferred to step 14, per the plan ordering (no `scripts/smoke-tests.sh` exists yet).
+
+**Verification:**
+- `bun run compile` clean.
+- `bun run test` 44/44 passing (19 duration + 25 config tests).
+- `bun run smoke` is expected to fail at this point because the smoke-test scripts are introduced in step 14.

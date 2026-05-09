@@ -61,6 +61,7 @@ A Claude Code plugin that runs project commands (tests, linters, type-checks) on
 - Never use `ReturnType<typeof ...>`. Use the actual type directly (e.g. `NodeJS.Timeout` instead of `ReturnType<typeof setTimeout>`).
 - Never use inline type casts (e.g. `(x as Foo).bar`). Assign to a typed variable instead (e.g. `const foo: Foo = x; foo.bar`).
 - Never use the `unknown` type. Use the actual type directly.
+- Don't add explicit type annotations on local variables unless they are required to make the code compile (e.g. empty array initializers that would otherwise infer as `never[]`, `let foo: T | undefined = undefined` declarations, `let foo: T;` declarations without an initializer, narrowing from `any`, or object literals whose later mutations need wider type slots). Let TypeScript infer the type from the right-hand side wherever it can.
 
 ## Restrictions
 
