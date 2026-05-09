@@ -1,3 +1,1 @@
-`commands` should be optional and can be empty.
-
-`cooldown` and `timeout` should be optional.
+The state file will be corrupted if there a multiple claudes running in parallel.

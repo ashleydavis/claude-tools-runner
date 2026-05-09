@@ -69,11 +69,11 @@ A Claude Code plugin that runs project commands (tests, linters, type-checks) on
 - All tests should pass after making changes.
 - Prefer to minimize the size of code changes.
 - Prefer not to update test code unless needed.
-- Add new tests for new code. Every function that is new, that you edit, or that the user asks you about should have unit tests.
+- Add new tests for new code. Every function that is new, that you edit, or that the user asks you about should have unit tests. Every function should be directly unit tested.
 - Backward compatibility is not required.
 - Use imports instead of requires.
 - All imports should be at the top of the file and not inside any functions.
 - Don't use dynamic imports.
-- Don't add exception handling unless I ask for it.
+- Don't add exception handling unless I ask for it.]
 - Don't use default or optional parameter values unless specifically asked to.
 - Never reformat or rewrite entire files. Only edit the specific lines that need to change.
