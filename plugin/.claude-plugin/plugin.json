@@ -1,0 +1,6 @@
+{
+    "name": "claude-tools-runner",
+    "description": "A smart tool runner: Runs your tests only when files have changed since the last time they were run.",
+    "version": "0.0.1",
+    "author": { "name": "Ashley Davis" }
+}

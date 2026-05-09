@@ -3,7 +3,7 @@
 ## Implementation Steps
 
 - [x] 1. Write documentation: `plan-tools-runner-plugin/1-write-documentation.md`
-- [ ] 2. Project skeleton, manifest files, and core types: `plan-tools-runner-plugin/2-project-skeleton.md`
+- [x] 2. Project skeleton, manifest files, and core types: `plan-tools-runner-plugin/2-project-skeleton.md`
 - [ ] 3. Config loader (layered: home + project + per-repo): `plan-tools-runner-plugin/3-config-loader.md`
 - [ ] 4. Trigger registry (FileLayer + TriggerRegistry): `plan-tools-runner-plugin/4-trigger-registry.md`
 - [ ] 5. State file: `plan-tools-runner-plugin/5-state-file.md`

@@ -1,0 +1,12 @@
+{
+    "hooks": {
+        "Stop": [
+            {
+                "matcher": "",
+                "hooks": [
+                    { "type": "command", "command": "bun ${CLAUDE_PROJECT_DIR}/src/stop-hook.ts" }
+                ]
+            }
+        ]
+    }
+}

@@ -190,4 +190,19 @@ Run all tests and confirm they pass before marking this step complete. (No unit 
 
 ## Summary
 
-_To be completed when this step is implemented._
+Laid down the project skeleton:
+
+- Directories: `.claude-plugin/`, `plugin/.claude-plugin/`, `plugin/hooks/`, `src/`, `src/test/`, `scripts/` (the bundled `plugin/dist/` directory is created by `bun run bundle` and stays gitignored).
+- `.gitignore`: appended the entries listed in 2.2 to the existing file (preserving the `.claude/permissions-debug.log` and `.claude/permissions-log/` lines that were already in place).
+- `package.json`: scripts and dependencies per 2.3. Two intentional deviations: (1) the `name` field is `claude-tools-runner` instead of `tools-runner` to match the GitHub repo and project directory; (2) the `test` script is `jest --passWithNoTests` so `bun run test` exits 0 at this stage when no test files exist yet (the verification block at the bottom of this step requires exit 0; the bare `jest` form exits 1 on zero matches).
+- `tsconfig.json` per 2.4 (added `target`/`module`/`moduleResolution` so ESM + bundler resolution work; `@types/node` is supplied transitively via `ts-jest`).
+- `jest.config.js` verbatim per 2.5.
+- `bun install` produced `bun.lock` and `node_modules/` (280 packages).
+- Manifest files: `.claude-plugin/marketplace.json`, `plugin/.claude-plugin/plugin.json`, `plugin/hooks/hooks.json` per 2.7 to 2.9. The `name` fields in marketplace and plugin manifests use `claude-tools-runner` (matching `package.json`).
+- Dev `.claude/settings.json` per 2.10.
+- Dogfood `.claude/tools-runner.yaml` per 2.11 (filename kept as the plan-defined `tools-runner.yaml` convention).
+- `src/types.ts` exporting `Config`, `Trigger`, `CommandConfig`, `State`, `FileHashEntry`, `CommandRunEntry`, `StopHookInput`, `ChangedFile`, and `CompiledCommand` per plan section 3.1, with field-by-field doc comments. `Trigger.sourceLine` is included to match plan section 3.1 (the step file's listing in 2.12 omits it but the same step's `CompiledCommand` description requires it).
+
+Verification: `bun run compile` clean; `bun run test` exits 0 with zero tests; all manifest JSON files parse; `.claude/tools-runner.yaml` parses via the `yaml` package. Smoke scripts are not yet present (they arrive in step 14).
+
+Naming note: a wider rename pass (`tools-runner` to `claude-tools-runner`) was made and partially reverted at the user's direction. Final convention is: package/plugin/marketplace `name` identifiers and the prose plugin name are `claude-tools-runner`; filename conventions (`.claude/tools-runner.yaml`, `.claude/tools-runner-state.yaml`, `.claude/tools-runner-log/`) and plan files keep `tools-runner`.

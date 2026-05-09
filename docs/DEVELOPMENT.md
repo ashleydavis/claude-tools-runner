@@ -1,6 +1,6 @@
 # Development
 
-How to build, test, and contribute to `tools-runner`.
+How to build, test, and contribute to `claude-tools-runner`.
 
 ## Prerequisites
 

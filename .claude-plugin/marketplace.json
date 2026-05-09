@@ -1,0 +1,13 @@
+{
+    "name": "claude-tools-runner",
+    "description": "Marketplace for the claude-tools-runner plugin",
+    "owner": { "name": "Ashley Davis", "email": "ashley@codecapers.com.au" },
+    "plugins": [
+        {
+            "name": "claude-tools-runner",
+            "description": "A smart tool runner: Runs your tests only when files have changed since the last time they were run.",
+            "source": "./plugin",
+            "author": { "name": "Ashley Davis", "email": "ashley@codecapers.com.au" }
+        }
+    ]
+}

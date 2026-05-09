@@ -1,6 +1,6 @@
 # How it works
 
-Internals of the `tools-runner` plugin: what runs when, what state is kept, and how a Stop event becomes a command spawn. For YAML syntax see [CONFIGURATION.md](CONFIGURATION.md).
+Internals of the `claude-tools-runner` plugin: what runs when, what state is kept, and how a Stop event becomes a command spawn. For YAML syntax see [CONFIGURATION.md](CONFIGURATION.md).
 
 ## High-level architecture
 

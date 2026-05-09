@@ -1,2 +1,10 @@
+node_modules/
+plugin/dist/
+*.log
+.DS_Store
+.env*
+.claude/tools-runner-state.yaml
+.claude/tools-runner-log/
+tmp/
 .claude/permissions-debug.log
 .claude/permissions-log/

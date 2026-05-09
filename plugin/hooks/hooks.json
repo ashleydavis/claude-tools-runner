@@ -1,0 +1,10 @@
+{
+    "hooks": {
+        "Stop": [
+            {
+                "matcher": "",
+                "hooks": [{ "type": "command", "command": "bun ${CLAUDE_PLUGIN_ROOT}/dist/stop-hook.js" }]
+            }
+        ]
+    }
+}

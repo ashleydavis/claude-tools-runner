@@ -1,4 +1,4 @@
-# tools-runner
+# claude-tools-runner
 
 A smart tool runner: runs your tests only when files have changed since the last time they were run.
 
@@ -7,16 +7,16 @@ A smart tool runner: runs your tests only when files have changed since the last
 ### Stable release
 
 ```
-/plugin marketplace add ashleydavis/tools-runner
-/plugin install tools-runner@tools-runner
+/plugin marketplace add ashleydavis/claude-tools-runner
+/plugin install claude-tools-runner@claude-tools-runner
 ```
 
 ### Pre-release / testing (pin to `dev` branch)
 
 ```
-/plugin marketplace add https://github.com/ashleydavis/tools-runner.git#dev
-/plugin install tools-runner@tools-runner
-/plugin marketplace update tools-runner   # pull latest dev commits
+/plugin marketplace add https://github.com/ashleydavis/claude-tools-runner.git#dev
+/plugin install claude-tools-runner@claude-tools-runner
+/plugin marketplace update claude-tools-runner   # pull latest dev commits
 ```
 
 To build and run from a local checkout instead of the marketplace, see [DEVELOPMENT.md](docs/DEVELOPMENT.md).

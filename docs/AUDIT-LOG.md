@@ -1,6 +1,6 @@
 # Audit Log
 
-Every Stop event processed by the `tools-runner` plugin is recorded to an audit log. One entry is written for each phase of the hook (config load, changed-file collection, trigger match, gate decision, command spawn, command result, state save), bracketed by `hook_started` and `hook_completed` entries. Together they answer questions like *"why didn't my command fire?"* without instrumenting the plugin yourself.
+Every Stop event processed by the `claude-tools-runner` plugin is recorded to an audit log. One entry is written for each phase of the hook (config load, changed-file collection, trigger match, gate decision, command spawn, command result, state save), bracketed by `hook_started` and `hook_completed` entries. Together they answer questions like *"why didn't my command fire?"* without instrumenting the plugin yourself.
 
 ## Location
 

@@ -1,0 +1,8 @@
+triggers:
+  - paths:
+      - "src/**/*.ts"
+      - "scripts/**/*.ts"
+    commands:
+      - run: "bun run test"
+        cooldown: 30s
+        cwd: "${{project}}"
