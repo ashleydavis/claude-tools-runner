@@ -231,7 +231,7 @@ commandRuns:
 
 ## Audit log
 
-Every Stop event is recorded to a paired `.json` (JSON Lines) and `.log` (plain text) file at `<projectDir>/.claude/tools-runner-log/YYYY-MM/DD/HH.{json,log}`. Files rotate hourly; older month directories are pruned each invocation (current month only is retained). All writes go through `fs.appendFile` from `node:fs/promises`, so concurrent hook invocations interleave at line boundaries safely.
+Every Stop event is recorded to a paired `.json` (JSON Lines) and `.log` (plain text) file at `<projectDir>/.claude/tools-runner-log/YYYY-MM/DD/HH.{json,log}`. Files rotate hourly; older month directories are pruned each invocation (the current month and the previous two are retained, anything older is purged). All writes go through `fs.appendFile` from `node:fs/promises`, so concurrent hook invocations interleave at line boundaries safely.
 
 Per-command stdout/stderr captures sit in a sibling `HH/` subdirectory inside the same hour, and the `command_started` / `command_result` entries carry a `logFile` field pointing at the relevant capture so a reader can jump from the audit log straight to the command's full output.
 

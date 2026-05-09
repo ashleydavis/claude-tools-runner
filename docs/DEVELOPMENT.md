@@ -71,6 +71,20 @@ bun run test:all   # unit + hook-smoke + smoke
 # alias: bun run ta
 ```
 
+### Inspecting the audit log
+
+Every Stop event writes a structured audit log to `<project>/.claude/tools-runner-log/YYYY-MM/DD/HH.{json,log}` (machine-readable JSON Lines plus a human-readable mirror). When debugging "why didn't my command fire?", inspect the most recent files:
+
+```bash
+# Tail the most recent hour's text log (any project under cwd):
+ls -t .claude/tools-runner-log/**/*.log | head -1 | xargs tail -f
+
+# Filter the JSON log for one event type (e.g. trigger_match):
+jq 'select(.type == "trigger_match")' .claude/tools-runner-log/**/*.json
+```
+
+See [AUDIT-LOG.md](AUDIT-LOG.md) for the full entry-type reference and more `jq` recipes.
+
 ## Bundling and publishing
 
 `bun run bundle` produces `plugin/dist/stop-hook.js`: a self-contained file with all dependencies inlined. The `dist/` directory is gitignored; bundles are produced on demand.

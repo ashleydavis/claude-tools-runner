@@ -564,6 +564,75 @@ describe("saveState", () => {
         expect(state.commandRuns[0].commandKey).toBe("good");
         expect(Object.keys(state.fileHashes).sort()).toEqual(["/tmp/myrepo/good.ts"]);
     });
+
+    test("returns SaveStateResult with prune counts: zero when nothing is dropped", async () => {
+        const filePath: string = path.join(tempArea.rootDir, "state.yaml");
+        const fixedNow: Date = new Date("2026-05-09T00:00:00.000Z");
+        const recentEntry: CommandRunEntry = makeCommandRunEntry({
+            commandKey: "k1",
+            matchedFiles: ["/tmp/myrepo/a.ts"],
+            lastRunAt: fixedNow.toISOString(),
+        });
+        const state: State = {
+            fileHashes: { "/tmp/myrepo/a.ts": { mtimeMs: 1, size: 1, hash: "a" } },
+            commandRuns: [recentEntry],
+        };
+        const result = await saveState(filePath, state, { now: fixedNow });
+        expect(result.prunedCommandRuns).toBe(0);
+        expect(result.prunedFileHashes).toBe(0);
+    });
+
+    test("returns SaveStateResult with prunedCommandRuns counting TTL drops and unparseable lastRunAt drops", async () => {
+        const filePath: string = path.join(tempArea.rootDir, "state.yaml");
+        const fixedNow: Date = new Date("2026-05-09T00:00:00.000Z");
+        const recentEntry: CommandRunEntry = makeCommandRunEntry({
+            commandKey: "kept",
+            matchedFiles: ["/tmp/myrepo/keep.ts"],
+            lastRunAt: fixedNow.toISOString(),
+        });
+        const expiredEntry: CommandRunEntry = makeCommandRunEntry({
+            commandKey: "expired",
+            matchedFiles: ["/tmp/myrepo/expired.ts"],
+            lastRunAt: new Date(fixedNow.getTime() - 5 * 86_400_000).toISOString(),
+        });
+        const garbageEntry: CommandRunEntry = makeCommandRunEntry({
+            commandKey: "garbage",
+            matchedFiles: ["/tmp/myrepo/garbage.ts"],
+            lastRunAt: "not-a-timestamp",
+        });
+        const state: State = {
+            fileHashes: {
+                "/tmp/myrepo/keep.ts": { mtimeMs: 1, size: 1, hash: "k" },
+                "/tmp/myrepo/expired.ts": { mtimeMs: 2, size: 2, hash: "e" },
+                "/tmp/myrepo/garbage.ts": { mtimeMs: 3, size: 3, hash: "g" },
+            },
+            commandRuns: [recentEntry, expiredEntry, garbageEntry],
+        };
+        const result = await saveState(filePath, state, { now: fixedNow, ttlDays: 3 });
+        expect(result.prunedCommandRuns).toBe(2);
+        expect(result.prunedFileHashes).toBe(2);
+    });
+
+    test("returns SaveStateResult with prunedFileHashes counting orphan drops only (no TTL drops)", async () => {
+        const filePath: string = path.join(tempArea.rootDir, "state.yaml");
+        const fixedNow: Date = new Date("2026-05-09T00:00:00.000Z");
+        const keptEntry: CommandRunEntry = makeCommandRunEntry({
+            commandKey: "kept",
+            matchedFiles: ["/tmp/myrepo/a.ts"],
+            lastRunAt: fixedNow.toISOString(),
+        });
+        const state: State = {
+            fileHashes: {
+                "/tmp/myrepo/a.ts": { mtimeMs: 1, size: 1, hash: "a" },
+                "/tmp/myrepo/orphan-one.ts": { mtimeMs: 2, size: 2, hash: "o1" },
+                "/tmp/myrepo/orphan-two.ts": { mtimeMs: 3, size: 3, hash: "o2" },
+            },
+            commandRuns: [keptEntry],
+        };
+        const result = await saveState(filePath, state, { now: fixedNow });
+        expect(result.prunedCommandRuns).toBe(0);
+        expect(result.prunedFileHashes).toBe(2);
+    });
 });
 
 describe("commandKeyFor", () => {

@@ -2,6 +2,26 @@ import { ChangedFile, CompiledCommand, Trigger } from "./types";
 import { TemplateContext } from "./template";
 import { compileCommands as pureCompileCommands } from "./compile";
 import { loadConfigFile } from "./config";
+import { matchFiles } from "./matcher";
+
+// Per-trigger match summary returned by `ITriggerLayer.evaluateMatches`. Carries the trigger's source
+// location and patterns alongside the matched/unmatched split for the supplied changed-file list. The Stop
+// hook turns each entry into a `trigger_match` audit-log record so users can inspect which triggers fired
+// (and which didn't) without instrumenting the plugin.
+export interface ITriggerMatchInfo {
+    // Display path of the YAML layer that produced the trigger.
+    sourceFile: string;
+    // 1-based line of the trigger inside `sourceFile`. Copied from `Trigger.sourceLine`.
+    sourceLine: number;
+    // 0-based index of the trigger within its source YAML file.
+    triggerIndex: number;
+    // Verbatim `paths` glob list as declared in the YAML (no template expansion applied).
+    patterns: string[];
+    // Files (verbatim `ChangedFile` objects) that satisfied at least one positive pattern and no negation.
+    matchedFiles: ChangedFile[];
+    // Files that were considered but did not satisfy the patterns. Useful for "why didn't my trigger fire?".
+    unmatchedFiles: ChangedFile[];
+}
 
 // One layer of the trigger registry. A layer wraps a single config source (the home YAML or one
 // per-directory YAML). Triggers stored inside a layer are NEVER exposed or concatenated outside it: the
@@ -21,9 +41,16 @@ export interface ITriggerLayer {
     // True when the layer holds zero triggers. The Stop hook combines `isEmpty()` across every layer to
     // decide whether to log `[tools-runner] no triggers configured, skipping`.
     isEmpty(): boolean;
+    // Number of triggers held privately by the layer. The Stop hook reads this when emitting `config_load`
+    // audit entries so the count is visible without exposing the trigger list itself.
+    triggerCount(): number;
     // Produces this layer's `CompiledCommand[]` for the given changed-file set. Internally delegates to the
     // pure `compileCommands` function from `compile.ts` with the layer's stored trigger list.
     compileCommands(changed: ChangedFile[]): CompiledCommand[];
+    // Emits one `ITriggerMatchInfo` per trigger held by the layer, evaluated against `changed`. The match
+    // info is surface metadata only: it does not produce any `CompiledCommand` and does not advance state.
+    // Used by the Stop hook to write `trigger_match` audit entries before compiling.
+    evaluateMatches(changed: ChangedFile[]): ITriggerMatchInfo[];
 }
 
 // Test-only layer that wraps a fixed `Trigger[]` provided by the test fixture. Production code always uses
@@ -51,8 +78,16 @@ export class StaticLayer implements ITriggerLayer {
         return this._triggers.length === 0;
     }
 
+    triggerCount(): number {
+        return this._triggers.length;
+    }
+
     compileCommands(changed: ChangedFile[]): CompiledCommand[] {
         return pureCompileCommands(this._triggers, this.sourceFile, this.ctx, this.scopeDir, changed);
+    }
+
+    evaluateMatches(changed: ChangedFile[]): ITriggerMatchInfo[] {
+        return evaluateLayerMatches(this._triggers, this.sourceFile, changed);
     }
 }
 
@@ -99,9 +134,48 @@ export class FileLayer implements ITriggerLayer {
         return this._triggers.length === 0;
     }
 
+    triggerCount(): number {
+        return this._triggers.length;
+    }
+
     compileCommands(changed: ChangedFile[]): CompiledCommand[] {
         return pureCompileCommands(this._triggers, this.sourceFile, this.ctx, this.scopeDir, changed);
     }
+
+    evaluateMatches(changed: ChangedFile[]): ITriggerMatchInfo[] {
+        return evaluateLayerMatches(this._triggers, this.sourceFile, changed);
+    }
+}
+
+// Shared helper that produces an `ITriggerMatchInfo` for each trigger by running the same `matchFiles` rules
+// the compile path uses, then computing the unmatched complement. Used by both `StaticLayer` and `FileLayer`
+// so the two layer implementations share one source of truth for match evaluation.
+export function evaluateLayerMatches(triggers: Trigger[], sourceFile: string, changed: ChangedFile[]): ITriggerMatchInfo[] {
+    const results: ITriggerMatchInfo[] = [];
+    for (let triggerIndex = 0; triggerIndex < triggers.length; triggerIndex++) {
+        const trigger = triggers[triggerIndex];
+        const matchedFiles = matchFiles(changed, trigger.paths);
+        const matchedAbsSet = new Set<string>();
+        for (const matchedFile of matchedFiles) {
+            matchedAbsSet.add(matchedFile.absPath);
+        }
+        const unmatchedFiles: ChangedFile[] = [];
+        for (const candidate of changed) {
+            if (!matchedAbsSet.has(candidate.absPath)) {
+                unmatchedFiles.push(candidate);
+            }
+        }
+        const patterns: string[] = trigger.paths !== undefined ? trigger.paths.slice() : [];
+        results.push({
+            sourceFile,
+            sourceLine: trigger.sourceLine,
+            triggerIndex,
+            patterns,
+            matchedFiles,
+            unmatchedFiles,
+        });
+    }
+    return results;
 }
 
 // Registry composing a variable number of trigger layers (home + N per-directory layers, N may be zero).

@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { ChangedFile, CommandConfig, CompiledCommand, Trigger } from "../types";
 import { TemplateContext } from "../template";
-import { FileLayer, ITriggerLayer, StaticLayer, TriggerRegistry } from "../trigger-registry";
+import { FileLayer, ITriggerLayer, StaticLayer, TriggerRegistry, evaluateLayerMatches } from "../trigger-registry";
 
 // Holds a temp directory path for the lifetime of one test, plus helpers to clean it up.
 interface TempArea {
@@ -100,6 +100,64 @@ describe("StaticLayer", () => {
         const layer = new StaticLayer(triggers, "static-source", "/abs/scope", ctx);
         expect(layer.compileCommands([])).toEqual([]);
     });
+
+    test("triggerCount returns the number of triggers held by the layer", () => {
+        const ctx: TemplateContext = { projectDir: "/abs/scope" };
+        const emptyLayer = new StaticLayer([], "static-empty", "/abs/scope", ctx);
+        expect(emptyLayer.triggerCount()).toBe(0);
+        const triggers: Trigger[] = [
+            makeTrigger(["src/**/*.ts"], ["echo a"], 1),
+            makeTrigger(["docs/**/*.md"], ["echo b"], 4),
+        ];
+        const populatedLayer = new StaticLayer(triggers, "static-pop", "/abs/scope", ctx);
+        expect(populatedLayer.triggerCount()).toBe(2);
+    });
+
+    test("evaluateMatches returns one entry per trigger with matched and unmatched files split", () => {
+        const ctx: TemplateContext = { projectDir: "/abs/scope" };
+        const triggers: Trigger[] = [
+            makeTrigger(["src/**/*.ts"], ["echo a"], 7),
+            makeTrigger(["docs/**/*.md"], ["echo b"], 12),
+        ];
+        const layer = new StaticLayer(triggers, "static-source", "/abs/scope", ctx);
+        const changed: ChangedFile[] = [
+            makeChangedFile("/abs/scope", "src/a.ts"),
+            makeChangedFile("/abs/scope", "src/b.ts"),
+            makeChangedFile("/abs/scope", "docs/x.md"),
+            makeChangedFile("/abs/scope", "README"),
+        ];
+        const matches = layer.evaluateMatches(changed);
+        expect(matches).toHaveLength(2);
+        expect(matches[0].sourceFile).toBe("static-source");
+        expect(matches[0].sourceLine).toBe(7);
+        expect(matches[0].triggerIndex).toBe(0);
+        expect(matches[0].patterns).toEqual(["src/**/*.ts"]);
+        expect(matches[0].matchedFiles.map(file => file.path).sort()).toEqual(["src/a.ts", "src/b.ts"]);
+        expect(matches[0].unmatchedFiles.map(file => file.path).sort()).toEqual(["README", "docs/x.md"]);
+        expect(matches[1].sourceFile).toBe("static-source");
+        expect(matches[1].sourceLine).toBe(12);
+        expect(matches[1].triggerIndex).toBe(1);
+        expect(matches[1].matchedFiles.map(file => file.path)).toEqual(["docs/x.md"]);
+        expect(matches[1].unmatchedFiles.map(file => file.path).sort()).toEqual(["README", "src/a.ts", "src/b.ts"]);
+    });
+
+    test("evaluateMatches returns an empty array when the layer holds no triggers", () => {
+        const ctx: TemplateContext = { projectDir: "/abs/scope" };
+        const layer = new StaticLayer([], "static-empty", "/abs/scope", ctx);
+        const changed: ChangedFile[] = [makeChangedFile("/abs/scope", "src/a.ts")];
+        expect(layer.evaluateMatches(changed)).toEqual([]);
+    });
+
+    test("evaluateMatches returns an entry per trigger even when nothing matched", () => {
+        const ctx: TemplateContext = { projectDir: "/abs/scope" };
+        const triggers: Trigger[] = [makeTrigger(["src/**/*.ts"], ["echo a"], 3)];
+        const layer = new StaticLayer(triggers, "static-source", "/abs/scope", ctx);
+        const changed: ChangedFile[] = [makeChangedFile("/abs/scope", "docs/x.md")];
+        const matches = layer.evaluateMatches(changed);
+        expect(matches).toHaveLength(1);
+        expect(matches[0].matchedFiles).toEqual([]);
+        expect(matches[0].unmatchedFiles.map(file => file.path)).toEqual(["docs/x.md"]);
+    });
 });
 
 describe("FileLayer", () => {
@@ -174,6 +232,61 @@ describe("FileLayer", () => {
         await writeFileEnsuringDirs(yamlPath, yamlText);
         const ctx: TemplateContext = { projectDir: tempArea.rootDir };
         await expect(FileLayer.create(yamlPath, yamlPath, tempArea.rootDir, ctx)).rejects.toThrow(/run must be a non-empty string/);
+    });
+
+    test("FileLayer.triggerCount reports the number of triggers parsed out of the YAML", async () => {
+        const yamlText = [
+            "triggers:",
+            "  - paths: [\"src/**/*.ts\"]",
+            "    commands:",
+            "      - run: \"echo a\"",
+            "  - paths: [\"docs/**/*.md\"]",
+            "    commands:",
+            "      - run: \"echo b\"",
+            "",
+        ].join("\n");
+        const yamlPath = path.join(tempArea.rootDir, "tools-runner.yaml");
+        await writeFileEnsuringDirs(yamlPath, yamlText);
+        const ctx: TemplateContext = { projectDir: tempArea.rootDir };
+        const layer = await FileLayer.create(yamlPath, yamlPath, tempArea.rootDir, ctx);
+        expect(layer.triggerCount()).toBe(2);
+    });
+
+    test("FileLayer.triggerCount is 0 for a missing-file layer", async () => {
+        const ctx: TemplateContext = { projectDir: tempArea.rootDir };
+        const layer = await FileLayer.create(null, "<no-config>", tempArea.rootDir, ctx);
+        expect(layer.triggerCount()).toBe(0);
+    });
+
+    test("FileLayer.evaluateMatches emits one info per trigger using the trigger's source line", async () => {
+        const yamlText = [
+            "triggers:",
+            "  - paths: [\"src/**/*.ts\"]",
+            "    commands:",
+            "      - run: \"echo a\"",
+            "  - paths: [\"docs/**/*.md\"]",
+            "    commands:",
+            "      - run: \"echo b\"",
+            "",
+        ].join("\n");
+        const yamlPath = path.join(tempArea.rootDir, "tools-runner.yaml");
+        await writeFileEnsuringDirs(yamlPath, yamlText);
+        const ctx: TemplateContext = { projectDir: tempArea.rootDir };
+        const layer = await FileLayer.create(yamlPath, "tools-runner.yaml", tempArea.rootDir, ctx);
+        const changed: ChangedFile[] = [
+            makeChangedFile(tempArea.rootDir, "src/a.ts"),
+            makeChangedFile(tempArea.rootDir, "docs/x.md"),
+        ];
+        const matches = layer.evaluateMatches(changed);
+        expect(matches).toHaveLength(2);
+        expect(matches[0].sourceFile).toBe("tools-runner.yaml");
+        expect(matches[0].sourceLine).toBe(2);
+        expect(matches[0].triggerIndex).toBe(0);
+        expect(matches[0].patterns).toEqual(["src/**/*.ts"]);
+        expect(matches[0].matchedFiles.map(file => file.path)).toEqual(["src/a.ts"]);
+        expect(matches[0].unmatchedFiles.map(file => file.path)).toEqual(["docs/x.md"]);
+        expect(matches[1].sourceLine).toBe(5);
+        expect(matches[1].matchedFiles.map(file => file.path)).toEqual(["docs/x.md"]);
     });
 });
 
@@ -297,10 +410,61 @@ describe("TriggerRegistry", () => {
             scopeDir: "/abs/custom",
             ctx: { projectDir: "/abs/custom" },
             isEmpty: () => true,
+            triggerCount: () => 0,
             compileCommands: () => [],
+            evaluateMatches: () => [],
         };
         const registry = new TriggerRegistry([customLayer]);
         expect(registry.isEmpty()).toBe(true);
         expect(registry.compileCommands([])).toEqual([]);
+    });
+});
+
+describe("evaluateLayerMatches", () => {
+    test("returns one ITriggerMatchInfo per trigger with matched/unmatched files split by matchFiles", () => {
+        const triggers: Trigger[] = [
+            makeTrigger(["src/**/*.ts"], ["echo a"], 7),
+            makeTrigger(["docs/**/*.md"], ["echo b"], 12),
+        ];
+        const changed: ChangedFile[] = [
+            makeChangedFile("/abs/scope", "src/a.ts"),
+            makeChangedFile("/abs/scope", "docs/x.md"),
+        ];
+        const result = evaluateLayerMatches(triggers, "layer.yaml", changed);
+        expect(result).toHaveLength(2);
+        expect(result[0].sourceFile).toBe("layer.yaml");
+        expect(result[0].sourceLine).toBe(7);
+        expect(result[0].triggerIndex).toBe(0);
+        expect(result[0].patterns).toEqual(["src/**/*.ts"]);
+        expect(result[0].matchedFiles.map(file => file.path)).toEqual(["src/a.ts"]);
+        expect(result[0].unmatchedFiles.map(file => file.path)).toEqual(["docs/x.md"]);
+        expect(result[1].sourceLine).toBe(12);
+        expect(result[1].triggerIndex).toBe(1);
+        expect(result[1].matchedFiles.map(file => file.path)).toEqual(["docs/x.md"]);
+    });
+
+    test("returns an empty array when triggers is empty", () => {
+        const changed: ChangedFile[] = [makeChangedFile("/abs/scope", "src/a.ts")];
+        expect(evaluateLayerMatches([], "layer.yaml", changed)).toEqual([]);
+    });
+
+    test("returns a fresh patterns array (slice) so mutation cannot leak back into the trigger", () => {
+        const trigger = makeTrigger(["src/**/*.ts"], ["echo a"], 1);
+        const result = evaluateLayerMatches([trigger], "layer.yaml", []);
+        expect(result[0].patterns).not.toBe(trigger.paths);
+        expect(result[0].patterns).toEqual(trigger.paths);
+    });
+
+    test("renders patterns as [] when the trigger has no paths declared", () => {
+        const trigger: Trigger = {
+            commands: [{ run: "echo hi" }],
+            sourceLine: 1,
+        };
+        const changed: ChangedFile[] = [makeChangedFile("/abs/scope", "src/a.ts")];
+        const result = evaluateLayerMatches([trigger], "layer.yaml", changed);
+        expect(result).toHaveLength(1);
+        expect(result[0].patterns).toEqual([]);
+        expect(result[0].matchedFiles).toEqual([]);
+        expect(result[0].unmatchedFiles.map(file => file.path)).toEqual(["src/a.ts"]);
     });
 });

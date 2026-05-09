@@ -2,96 +2,21 @@ import * as childProcess from "node:child_process";
 import * as nodeFs from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { AuditCommandOutcome, IAuditLogger, NullAuditLogger, toLocalISOString as toAuditLocalISOString } from "./audit-log";
 import { GateDecision, decideGate } from "./gate";
-import { upsertCommandRun } from "./state";
+import { findCommandRun, upsertCommandRun } from "./state";
 import { CompiledCommand, State } from "./types";
 
 // Default per-command timeout in seconds when `CommandConfig.timeout` is unset. Mirrors `parseDuration("5m")`.
 const DEFAULT_TIMEOUT_SECONDS: number = 300;
 
+// Default cooldown in seconds when `CommandConfig.cooldown` is unset. Mirrors `parseDuration("1m")`. Used by
+// the audit-log `gate_decision` entry so the persisted cooldown reflects the value `decideGate` actually used.
+const DEFAULT_COOLDOWN_SECONDS: number = 60;
+
 // Grace period (in milliseconds) between SIGTERM and the follow-up SIGKILL when a command exceeds its
 // timeout. Gives the process a brief window to flush stdio and exit cleanly before being force-killed.
 const KILL_GRACE_MS: number = 2000;
-
-// Outcome category attached to each `IAuditCommandResultRecord`. `success` is exit 0, `failure` is any
-// non-zero exit, `timeout` is when the per-command timer fired, and `error` is when `proc.exited` rejected
-// (e.g. ENOENT from spawn).
-export type CommandOutcome = "success" | "failure" | "timeout" | "error";
-
-// Audit-log record emitted immediately after a command spawns. Step 15 will define the canonical persistent
-// shape; the runner owns this minimal seam so the contract is explicit at the call site.
-export interface IAuditCommandStartedRecord {
-    // Discriminator so a logger can switch on event type without inspecting field presence.
-    type: "command_started";
-    // Display path of the YAML layer this command came from. Copied from `CompiledCommand.sourceFile`.
-    sourceFile: string;
-    // 1-based line number inside `sourceFile` of the trigger that produced this command.
-    sourceLine: number;
-    // Content-addressed key for this command (sha256 of `expandedRun + 0x00 + expandedCwd`).
-    commandKey: string;
-    // The fully template-expanded shell command line that was passed to `sh -c`.
-    expandedRun: string;
-    // The fully template-expanded working directory the command was spawned in.
-    expandedCwd: string;
-    // OS process id of the spawned child. Undefined when the spawn failed before the `spawn` event fired.
-    pid: number | undefined;
-    // Absolute path of the per-command log file containing the captured stdout/stderr.
-    logFile: string;
-    // ISO 8601 string of the moment the runner spawned the command.
-    startedAt: string;
-}
-
-// Audit-log record emitted after a command's `exited` promise resolves (or rejects). Step 15 will extend
-// this with persistent metadata; the runner only requires the fields below.
-export interface IAuditCommandResultRecord {
-    // Discriminator so a logger can switch on event type without inspecting field presence.
-    type: "command_result";
-    // Display path of the YAML layer this command came from.
-    sourceFile: string;
-    // 1-based line number inside `sourceFile` of the trigger that produced this command.
-    sourceLine: number;
-    // Content-addressed key for this command.
-    commandKey: string;
-    // The fully template-expanded shell command line.
-    expandedRun: string;
-    // The fully template-expanded working directory.
-    expandedCwd: string;
-    // OS process id of the spawned child, or undefined if the spawn failed.
-    pid: number | undefined;
-    // Absolute path of the per-command log file.
-    logFile: string;
-    // High-level result category: `success`, `failure`, `timeout`, or `error`.
-    outcome: CommandOutcome;
-    // Numeric exit code: 0 on success, the actual non-zero code on failure, -1 on timeout / spawn error.
-    exitCode: number;
-    // Wall-clock duration in milliseconds from spawn to exit (or to timeout / spawn-error rejection).
-    durationMs: number;
-    // System error message when `outcome === "error"` (or `"timeout"` when `outcome === "timeout"`).
-    error: string | undefined;
-    // ISO 8601 string of the moment the runner finished processing the command.
-    finishedAt: string;
-}
-
-// Minimal audit-logger seam consumed by `runCommands`. Step 15 will provide the production implementation
-// that writes to `<projectDir>/.claude/tools-runner-log/YYYY-MM/DD/HH.json`. Until then the runner uses
-// `NullAuditLogger`, which discards all events.
-export interface IAuditLogger {
-    // Records that a command has been spawned.
-    commandStarted(record: IAuditCommandStartedRecord): Promise<void>;
-    // Records the outcome of a command after `proc.exited` resolves or rejects.
-    commandResult(record: IAuditCommandResultRecord): Promise<void>;
-}
-
-// No-op `IAuditLogger`. Used as the default when callers do not pass `RunCommandsOptions.logger`. Step 15
-// will replace this default at the Stop-hook entry point.
-export class NullAuditLogger implements IAuditLogger {
-    // Discards the start record without persisting anything.
-    async commandStarted(_record: IAuditCommandStartedRecord): Promise<void> {
-    }
-    // Discards the result record without persisting anything.
-    async commandResult(_record: IAuditCommandResultRecord): Promise<void> {
-    }
-}
 
 // One element of the array returned by `runCommands`. Carries the prepared command, the gate-time files
 // hash, the chosen log-file path, and the execution outcome.
@@ -171,6 +96,10 @@ export interface RunCommandsOptions {
     // Root of the unified per-command log file tree. Defaults to `<cwd>/.claude/tools-runner-log`. The
     // runner appends `YYYY-MM/DD/HH/<filename>` itself. Tests pass an `fs.mkdtemp` directory.
     logBaseDir?: string;
+    // Project directory used to relativise `logFile` paths in audit-log entries (the entries record paths
+    // relative to `projectDir` so the audit log stays portable). Defaults to deriving from `logBaseDir`
+    // (`<logBaseDir>/../..`). `RunResult.logFile` always stays absolute regardless of this option.
+    projectDir?: string;
 }
 
 // Computes the per-command log file path for `startedAt`. Layout: `<logBaseDir>/YYYY-MM/DD/HH/MM-SS-<ms>-<keyShort>.log`.
@@ -276,19 +205,48 @@ export async function runCommands(prepared: CompiledCommand[], state: State, now
     const nowFactory = opts?.now ?? (() => new Date());
     const logger = opts?.logger ?? new NullAuditLogger();
     const logBaseDir = opts?.logBaseDir ?? path.join(process.cwd(), ".claude", "tools-runner-log");
+    const projectDir = opts?.projectDir ?? path.resolve(logBaseDir, "..", "..");
 
     const tasks: Promise<RunResult>[] = [];
     for (const compiled of prepared) {
-        tasks.push(runOneCommand(compiled, state, now, spawnFn, nowFactory, logger, logBaseDir));
+        tasks.push(runOneCommand(compiled, state, now, spawnFn, nowFactory, logger, logBaseDir, projectDir));
     }
     return Promise.all(tasks);
 }
 
 // Runs one prepared command end-to-end: gate, spawn, pipe IO into the log file, await/timeout, write the
 // log footer, and update state on success. Always resolves: no exception escapes a single command and the
-// rest of the batch keeps running.
-export async function runOneCommand(prepared: CompiledCommand, state: State, now: Date, spawnFn: Spawner, nowFactory: () => Date, logger: IAuditLogger, logBaseDir: string): Promise<RunResult> {
+// rest of the batch keeps running. Emits one `gate_decision` audit entry per call, plus paired
+// `command_started` and `command_result` entries when the gate decides to run. `projectDir` is used to
+// relativise `logFile` paths in audit entries; `RunResult.logFile` stays absolute.
+export async function runOneCommand(prepared: CompiledCommand, state: State, now: Date, spawnFn: Spawner, nowFactory: () => Date, logger: IAuditLogger, logBaseDir: string, projectDir: string): Promise<RunResult> {
     const gate: GateDecision = await decideGate(prepared, state, now);
+    const cooldownSeconds: number = prepared.command.cooldown ?? DEFAULT_COOLDOWN_SECONDS;
+    const priorRun = findCommandRun(state, prepared.commandKey);
+    const lastFilesHash: string | undefined = priorRun?.lastFilesHash;
+    let elapsedSeconds: number | undefined = undefined;
+    if (priorRun !== undefined) {
+        const lastRunMs = Date.parse(priorRun.lastRunAt);
+        if (!Number.isNaN(lastRunMs)) {
+            elapsedSeconds = (now.getTime() - lastRunMs) / 1000;
+        }
+    }
+    await logger.log({
+        type: "gate_decision",
+        timestamp: toAuditLocalISOString(nowFactory()),
+        sourceFile: prepared.sourceFile,
+        sourceLine: prepared.sourceLine,
+        triggerIndex: prepared.triggerIndexInFile,
+        commandIndex: prepared.commandIndex,
+        expandedRun: prepared.expandedRun,
+        expandedCwd: prepared.expandedCwd,
+        filesHash: gate.filesHash,
+        lastFilesHash,
+        cooldownSeconds,
+        elapsedSeconds,
+        decision: gate.run ? "run" : "skip",
+        reason: gate.reason,
+    });
     if (!gate.run) {
         process.stdout.write(`[tools-runner] ${prepared.sourceFile}:trigger ${prepared.triggerIndexInFile} cmd ${prepared.commandIndex} cwd=${prepared.expandedCwd} run=${prepared.expandedRun}: SKIP ${gate.reason}\n`);
         return {
@@ -303,6 +261,7 @@ export async function runOneCommand(prepared: CompiledCommand, state: State, now
 
     const startedAt = nowFactory();
     const logFile = resolveCommandLogPath(logBaseDir, startedAt, prepared.commandKey);
+    const auditLogFile = path.relative(projectDir, logFile);
     await fs.mkdir(path.dirname(logFile), { recursive: true });
     const writeStream = nodeFs.createWriteStream(logFile, { flags: "w" });
     writeStream.write(`> ${prepared.expandedRun}\n`);
@@ -314,19 +273,21 @@ export async function runOneCommand(prepared: CompiledCommand, state: State, now
     const flushStdout = pipeStreamWithTag(proc.stdout, writeStream, "[OUT] ");
     const flushStderr = pipeStreamWithTag(proc.stderr, writeStream, "[ERR] ");
 
-    await logger.commandStarted({
+    const timeoutSeconds = prepared.command.timeout ?? DEFAULT_TIMEOUT_SECONDS;
+    await logger.log({
         type: "command_started",
+        timestamp: toAuditLocalISOString(startedAt),
         sourceFile: prepared.sourceFile,
         sourceLine: prepared.sourceLine,
-        commandKey: prepared.commandKey,
+        triggerIndex: prepared.triggerIndexInFile,
+        commandIndex: prepared.commandIndex,
         expandedRun: prepared.expandedRun,
         expandedCwd: prepared.expandedCwd,
-        pid: proc.pid,
-        logFile,
-        startedAt: startedAt.toISOString(),
+        pid: proc.pid ?? null,
+        timeoutSeconds,
+        logFile: auditLogFile,
     });
 
-    const timeoutSeconds = prepared.command.timeout ?? DEFAULT_TIMEOUT_SECONDS;
     const timeoutMs = Math.round(timeoutSeconds * 1000);
 
     let timedOut = false;
@@ -385,37 +346,33 @@ export async function runOneCommand(prepared: CompiledCommand, state: State, now
 
     await endWriteStream(writeStream);
 
-    let outcome: CommandOutcome;
+    let outcome: AuditCommandOutcome;
     if (timedOut) {
         outcome = "timeout";
     }
-    else if (error !== undefined) {
-        outcome = "error";
-    }
-    else if (exitCode === 0) {
-        outcome = "success";
+    else if (exitCode === 0 && error === undefined) {
+        outcome = "pass";
     }
     else {
-        outcome = "failure";
+        outcome = "fail";
     }
 
-    await logger.commandResult({
+    await logger.log({
         type: "command_result",
+        timestamp: toAuditLocalISOString(finishedAt),
         sourceFile: prepared.sourceFile,
         sourceLine: prepared.sourceLine,
-        commandKey: prepared.commandKey,
+        triggerIndex: prepared.triggerIndexInFile,
+        commandIndex: prepared.commandIndex,
         expandedRun: prepared.expandedRun,
         expandedCwd: prepared.expandedCwd,
-        pid: proc.pid,
-        logFile,
-        outcome,
         exitCode,
         durationMs,
-        error,
-        finishedAt: finishedAt.toISOString(),
+        outcome,
+        logFile: auditLogFile,
     });
 
-    if (outcome === "success") {
+    if (outcome === "pass") {
         upsertCommandRun(state, {
             commandKey: prepared.commandKey,
             expandedRun: prepared.expandedRun,

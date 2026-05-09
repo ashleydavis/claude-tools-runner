@@ -3,13 +3,10 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Readable } from "node:stream";
+import { IAuditLogEntry, IAuditLogger, NullAuditLogger } from "../audit-log";
 import { computeCommandKey } from "../compile";
 import { aggregateHash } from "../hash";
 import {
-    IAuditCommandResultRecord,
-    IAuditCommandStartedRecord,
-    IAuditLogger,
-    NullAuditLogger,
     RunCommandsOptions,
     RunResult,
     SpawnedProc,
@@ -24,6 +21,16 @@ import {
     toLocalISOString,
 } from "../runner";
 import { ChangedFile, CommandConfig, CompiledCommand, State } from "../types";
+
+// Recording `IAuditLogger` used by the new audit-emission tests. Captures every entry handed to `log`
+// without filtering so the assertions can inspect the full sequence (gate_decision, command_started,
+// command_result) and pull fields like `sourceLine` straight off the captured payloads.
+class RecordingAuditLogger implements IAuditLogger {
+    public readonly entries: IAuditLogEntry[] = [];
+    async log(entry: IAuditLogEntry): Promise<void> {
+        this.entries.push(entry);
+    }
+}
 
 // One stub `SpawnedProc` plus the controls a test needs to drive it: resolve/reject the `exited` promise
 // from outside, push data onto the stdout/stderr streams, and observe `kill` calls.
@@ -651,42 +658,128 @@ describe("defaultSpawner", () => {
     });
 });
 
-describe("NullAuditLogger", () => {
-    test("commandStarted resolves to undefined and does not throw", async () => {
-        const logger: IAuditLogger = new NullAuditLogger();
-        const record: IAuditCommandStartedRecord = {
-            type: "command_started",
-            sourceFile: "x.yaml",
-            sourceLine: 1,
-            commandKey: "abc",
-            expandedRun: "echo",
-            expandedCwd: "/tmp",
-            pid: 42,
-            logFile: "/tmp/log",
-            startedAt: "2026-05-09T00:00:00.000Z",
-        };
-        const result = await logger.commandStarted(record);
-        expect(result).toBeUndefined();
+describe("runCommands audit-log emissions", () => {
+    let auditTempDir: string;
+    let auditLogBaseDir: string;
+    let stdoutSpy: jest.SpyInstance;
+
+    beforeEach(async () => {
+        auditTempDir = await fs.mkdtemp(path.join(os.tmpdir(), "tools-runner-runner-audit-test-"));
+        auditLogBaseDir = path.join(auditTempDir, "log");
+        stdoutSpy = jest.spyOn(process.stdout, "write").mockImplementation((): boolean => true);
     });
 
-    test("commandResult resolves to undefined and does not throw", async () => {
-        const logger: IAuditLogger = new NullAuditLogger();
-        const record: IAuditCommandResultRecord = {
-            type: "command_result",
-            sourceFile: "x.yaml",
-            sourceLine: 1,
-            commandKey: "abc",
-            expandedRun: "echo",
-            expandedCwd: "/tmp",
-            pid: 42,
-            logFile: "/tmp/log",
-            outcome: "success",
-            exitCode: 0,
-            durationMs: 5,
-            error: undefined,
-            finishedAt: "2026-05-09T00:00:00.000Z",
+    afterEach(async () => {
+        stdoutSpy.mockRestore();
+        await fs.rm(auditTempDir, { recursive: true, force: true });
+    });
+
+    test("emits gate_decision, command_started, and command_result for each spawned command, all carrying the prepared command's sourceLine", async () => {
+        const fileOne = await writeChangedFile(auditTempDir, "src/a.ts", "alpha");
+        const compiledOne = makeCompiled([fileOne], "echo one", path.join(auditTempDir, "work"), 0, 30);
+        const fileTwo = await writeChangedFile(auditTempDir, "src/b.ts", "bravo");
+        const compiledTwo = makeCompiled([fileTwo], "echo two", path.join(auditTempDir, "work"), 0, 30);
+        const recorder = makeRecordingSpawner();
+        const auditLogger = new RecordingAuditLogger();
+        const state: State = { fileHashes: {}, commandRuns: [] };
+        const fixedNow = new Date("2026-05-09T14:30:15.123Z");
+        const opts: RunCommandsOptions = {
+            spawn: recorder.spawner,
+            now: () => fixedNow,
+            logger: auditLogger,
+            logBaseDir: auditLogBaseDir,
         };
-        const result = await logger.commandResult(record);
+
+        const resultsPromise = runCommands([compiledOne, compiledTwo], state, fixedNow, opts);
+        const stubOne = await recorder.nextSpawn();
+        const stubTwo = await recorder.nextSpawn();
+        stubOne.pushStdout(null);
+        stubOne.pushStderr(null);
+        stubTwo.pushStdout(null);
+        stubTwo.pushStderr(null);
+        stubOne.finishWithCode(0);
+        stubTwo.finishWithCode(0);
+        await resultsPromise;
+
+        const gateEntries = auditLogger.entries.filter(entry => entry.type === "gate_decision");
+        const startEntries = auditLogger.entries.filter(entry => entry.type === "command_started");
+        const resultEntries = auditLogger.entries.filter(entry => entry.type === "command_result");
+        expect(gateEntries).toHaveLength(2);
+        expect(startEntries).toHaveLength(2);
+        expect(resultEntries).toHaveLength(2);
+        for (const entry of gateEntries) {
+            expect((entry as { sourceLine: number }).sourceLine).toBe(7);
+        }
+        for (const entry of startEntries) {
+            expect((entry as { sourceLine: number }).sourceLine).toBe(7);
+        }
+        for (const entry of resultEntries) {
+            expect((entry as { sourceLine: number }).sourceLine).toBe(7);
+            expect((entry as { outcome: string }).outcome).toBe("pass");
+        }
+    });
+
+    test("a timed-out command emits command_result with outcome 'timeout' and exitCode -1", async () => {
+        const fileOne = await writeChangedFile(auditTempDir, "src/a.ts", "alpha");
+        const compiled = makeCompiled([fileOne], "sleep forever", path.join(auditTempDir, "work"), 0, 0.05);
+        const recorder = makeRecordingSpawner();
+        const auditLogger = new RecordingAuditLogger();
+        const state: State = { fileHashes: {}, commandRuns: [] };
+        const fixedNow = new Date("2026-05-09T14:30:15.123Z");
+        const opts: RunCommandsOptions = {
+            spawn: recorder.spawner,
+            now: () => fixedNow,
+            logger: auditLogger,
+            logBaseDir: auditLogBaseDir,
+        };
+
+        const resultsPromise = runCommands([compiled], state, fixedNow, opts);
+        const stub = await recorder.nextSpawn();
+        stub.pushStdout(null);
+        stub.pushStderr(null);
+        await resultsPromise;
+
+        const resultEntries = auditLogger.entries.filter(entry => entry.type === "command_result");
+        expect(resultEntries).toHaveLength(1);
+        const resultEntry = resultEntries[0] as { outcome: string; exitCode: number };
+        expect(resultEntry.outcome).toBe("timeout");
+        expect(resultEntry.exitCode).toBe(-1);
+    });
+
+    test("omitting the logger option uses NullAuditLogger so the recording stub sees no calls", async () => {
+        const fileOne = await writeChangedFile(auditTempDir, "src/a.ts", "alpha");
+        const compiled = makeCompiled([fileOne], "echo no-logger", path.join(auditTempDir, "work"), 0, 30);
+        const recorder = makeRecordingSpawner();
+        const auditLogger = new RecordingAuditLogger();
+        const state: State = { fileHashes: {}, commandRuns: [] };
+        const fixedNow = new Date("2026-05-09T14:30:15.123Z");
+        const opts: RunCommandsOptions = {
+            spawn: recorder.spawner,
+            now: () => fixedNow,
+            logBaseDir: auditLogBaseDir,
+        };
+
+        const resultsPromise = runCommands([compiled], state, fixedNow, opts);
+        const stub = await recorder.nextSpawn();
+        stub.pushStdout(null);
+        stub.pushStderr(null);
+        stub.finishWithCode(0);
+        await resultsPromise;
+
+        expect(auditLogger.entries).toHaveLength(0);
+    });
+});
+
+describe("NullAuditLogger", () => {
+    test("log resolves to undefined and does not throw", async () => {
+        const logger: IAuditLogger = new NullAuditLogger();
+        const result = await logger.log({
+            type: "hook_started",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            cwd: "/tmp",
+            projectDir: "/tmp",
+            stopHookActive: false,
+        });
         expect(result).toBeUndefined();
     });
 });
@@ -751,6 +844,7 @@ describe("runOneCommand", () => {
             () => fixedNow,
             new NullAuditLogger(),
             oneLogBaseDir,
+            oneTempDir,
         );
 
         expect(result.exitCode).toBe(0);

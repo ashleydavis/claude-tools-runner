@@ -3,7 +3,33 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Readable } from "node:stream";
-import { main, readStdin, runStopHook } from "../stop-hook";
+import { resolveJsonLogPath } from "../audit-log";
+import { HookHandledError, main, readStdin, runStopHook } from "../stop-hook";
+
+// Reads every JSON Lines audit-log entry written under `<projectDir>/.claude/tools-runner-log` for the given
+// `now` and returns the parsed objects in append order. Used by the audit-log assertions to verify that the
+// Stop hook emitted the expected sequence of entries (hook_started, config_load, ..., hook_completed).
+interface IAuditEntryRecord {
+    type: string;
+    [extraField: string]: unknown;
+}
+async function readAuditEntries(projectDir: string, now: Date): Promise<IAuditEntryRecord[]> {
+    const baseDir = path.join(projectDir, ".claude", "tools-runner-log");
+    const jsonPath = resolveJsonLogPath(baseDir, now);
+    let text: string;
+    try {
+        text = await fs.readFile(jsonPath, "utf8");
+    }
+    catch (caughtErr) {
+        const errnoErr = caughtErr as NodeJS.ErrnoException;
+        if (errnoErr.code === "ENOENT") {
+            return [];
+        }
+        throw caughtErr;
+    }
+    const lines = text.trimEnd().split("\n");
+    return lines.map(jsonLine => JSON.parse(jsonLine) as IAuditEntryRecord);
+}
 
 // Sentinel error thrown by the stubbed `process.exit` so a single test invocation can stop the Stop hook
 // without terminating the Jest worker. The error carries the requested exit code so the test can assert it.
@@ -184,6 +210,27 @@ async function runHookAllowingExit(): Promise<void> {
         throw caughtErr;
     }
 }
+
+describe("HookHandledError", () => {
+    test("captures the message verbatim and exposes it via .message", () => {
+        const err = new HookHandledError("[tools-runner] failed to load X: bad");
+        expect(err.message).toBe("[tools-runner] failed to load X: bad");
+        expect(err.name).toBe("HookHandledError");
+        expect(err).toBeInstanceOf(Error);
+    });
+
+    test("preserves the supplied stack string when one is provided", () => {
+        const inputStack = "Error: original\n    at frame:1:1";
+        const err = new HookHandledError("synthetic", inputStack);
+        expect(err.stack).toBe(inputStack);
+    });
+
+    test("falls back to a stack from `super(message)` when no stack is provided", () => {
+        const err = new HookHandledError("no stack provided");
+        expect(typeof err.stack).toBe("string");
+        expect((err.stack as string).length).toBeGreaterThan(0);
+    });
+});
 
 describe("stop-hook module guard", () => {
     test("importing the module under NODE_ENV=test does not auto-run", () => {
@@ -572,6 +619,111 @@ describe("runStopHook", () => {
 
         expect(installedIO.captured.exitCode).toBe(1);
         expect(joinedStderr(installedIO.captured)).toContain("[tools-runner] stdin payload exceeded 1 MiB cap");
+    });
+
+    test("recursion guard with CLAUDE_PROJECT_DIR set writes hook_started + hook_completed with skipReason 'stop_hook_active'", async () => {
+        process.env["CLAUDE_PROJECT_DIR"] = projectDir;
+        process.env["HOME"] = homeDir;
+        restoreStdin();
+        restoreStdin = installStdin(JSON.stringify({ stop_hook_active: true }));
+
+        await runHookAllowingExit();
+
+        const entries = await readAuditEntries(projectDir, new Date());
+        const types = entries.map(entry => entry.type);
+        expect(types).toContain("hook_started");
+        expect(types).toContain("hook_completed");
+        const startedEntry = entries.find(entry => entry.type === "hook_started")!;
+        expect(startedEntry.stopHookActive).toBe(true);
+        const completedEntry = entries.find(entry => entry.type === "hook_completed")!;
+        expect(completedEntry.skipReason).toBe("stop_hook_active");
+        expect(completedEntry.exitCode).toBe(0);
+    });
+
+    test("successful invocation with one matching trigger writes the full audit pipeline with the trigger's sourceLine", async () => {
+        process.env["CLAUDE_PROJECT_DIR"] = projectDir;
+        process.env["HOME"] = homeDir;
+        await initGitRepo(projectDir);
+        await fs.mkdir(path.join(homeDir, ".claude"), { recursive: true });
+        // Empty home YAML: produces a `config_load` entry with triggerCount: 0 plus zero triggers.
+        await fs.writeFile(path.join(homeDir, ".claude", "tools-runner.yaml"), "triggers: []\n");
+        await fs.mkdir(path.join(projectDir, ".claude"), { recursive: true });
+        // Project YAML: trigger sits on line 4 (1-based: 1=triggers:, 2=- paths:, 3=    - '...', 4=  commands: — actually we
+        // pin the trigger key on line 2, with the trigger node beginning at the leading dash. picomatch reads
+        // `Trigger.sourceLine` from the line where the trigger's first key starts; for our YAML below the
+        // first key in the first trigger is `paths` on line 2.
+        const projectYaml =
+            "triggers:\n" +
+            "  - paths:\n" +
+            "      - '**/*.ts'\n" +
+            "    commands:\n" +
+            "      - run: 'echo audit'\n" +
+            "        cooldown: '0s'\n" +
+            "        timeout: '30s'\n";
+        await fs.writeFile(path.join(projectDir, ".claude", "tools-runner.yaml"), projectYaml);
+        await fs.writeFile(path.join(projectDir, "x.ts"), "alpha");
+        restoreStdin();
+        restoreStdin = installStdin("{}");
+
+        await runHookAllowingExit();
+
+        expect(installedIO.captured.exitCode).toBe(null);
+        const entries = await readAuditEntries(projectDir, new Date());
+        const types = entries.map(entry => entry.type);
+        expect(types).toContain("hook_started");
+        expect(types).toContain("config_load");
+        expect(types).toContain("changed_files");
+        expect(types).toContain("trigger_match");
+        expect(types).toContain("gate_decision");
+        expect(types).toContain("command_started");
+        expect(types).toContain("command_result");
+        expect(types).toContain("state_saved");
+        expect(types).toContain("hook_completed");
+
+        const projectMatchEntries = entries.filter(entry => entry.type === "trigger_match" && entry.sourceFile === ".claude/tools-runner.yaml");
+        expect(projectMatchEntries).toHaveLength(1);
+        const matchEntry = projectMatchEntries[0];
+        expect(matchEntry.sourceLine).toBe(2);
+        expect(matchEntry.matchedFiles).toEqual(["x.ts"]);
+
+        const projectGateEntries = entries.filter(entry => entry.type === "gate_decision" && entry.sourceFile === ".claude/tools-runner.yaml");
+        expect(projectGateEntries).toHaveLength(1);
+        expect(projectGateEntries[0].sourceLine).toBe(2);
+        expect(projectGateEntries[0].decision).toBe("run");
+
+        const projectStartEntries = entries.filter(entry => entry.type === "command_started" && entry.sourceFile === ".claude/tools-runner.yaml");
+        expect(projectStartEntries).toHaveLength(1);
+        expect(projectStartEntries[0].sourceLine).toBe(2);
+
+        const projectResultEntries = entries.filter(entry => entry.type === "command_result" && entry.sourceFile === ".claude/tools-runner.yaml");
+        expect(projectResultEntries).toHaveLength(1);
+        expect(projectResultEntries[0].sourceLine).toBe(2);
+        expect(projectResultEntries[0].outcome).toBe("pass");
+    });
+
+    test("YAML parse error writes a hook_error audit-log entry, the canonical stderr line, and exits 1", async () => {
+        process.env["CLAUDE_PROJECT_DIR"] = projectDir;
+        process.env["HOME"] = homeDir;
+        await initGitRepo(projectDir);
+        await fs.mkdir(path.join(projectDir, ".claude"), { recursive: true });
+        await fs.writeFile(path.join(projectDir, ".claude", "tools-runner.yaml"), "triggers: [\nbroken yaml here");
+        restoreStdin();
+        restoreStdin = installStdin("{}");
+
+        await runHookAllowingExit();
+
+        expect(installedIO.captured.exitCode).toBe(1);
+        expect(joinedStderr(installedIO.captured)).toContain("failed to load .claude/tools-runner.yaml");
+        const entries = await readAuditEntries(projectDir, new Date());
+        const types = entries.map(entry => entry.type);
+        expect(types).toContain("hook_started");
+        expect(types).toContain("hook_error");
+        const errorEntry = entries.find(entry => entry.type === "hook_error")!;
+        expect(typeof errorEntry.message).toBe("string");
+        expect((errorEntry.message as string)).toContain("failed to load .claude/tools-runner.yaml");
+        // The failing layer must NOT have a config_load entry; only the home layer (which loaded fine) gets one.
+        const projectConfigLoadEntries = entries.filter(entry => entry.type === "config_load" && entry.filePath === ".claude/tools-runner.yaml");
+        expect(projectConfigLoadEntries).toHaveLength(0);
     });
 });
 

@@ -36,7 +36,7 @@ The whole `tools-runner-log/` tree is gitignored by the plugin's own `.gitignore
 
 ## Retention
 
-On every hook invocation the plugin removes month directories older than the current calendar month. Only the current month is kept. Cleanup runs once at the start of the hook (inside `createLogger`) and is awaited before any audit-log entry is written; a missing log directory is tolerated silently.
+On every hook invocation the plugin removes month directories older than two calendar months back from the hook's `now`. The current month and the previous two are retained; everything older is purged. Cleanup runs once at the start of the hook (inside `createLogger`) and is awaited before any audit-log entry is written; a missing log directory is tolerated silently.
 
 ## Format
 

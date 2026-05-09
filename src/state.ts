@@ -23,6 +23,15 @@ export interface SaveStateOptions {
     ttlDays?: number;
 }
 
+// Result returned by `saveState`. Carries the cardinality of the prune passes that ran during the save so
+// callers (the Stop hook) can emit a `state_saved` audit-log entry without recomputing the deltas.
+export interface SaveStateResult {
+    // Number of `commandRuns` entries dropped by the TTL prune (and the unparseable-`lastRunAt` filter).
+    prunedCommandRuns: number;
+    // Number of `fileHashes` entries dropped by the orphan cascade after `commandRuns` was pruned.
+    prunedFileHashes: number;
+}
+
 // Returns the absolute path of the per-project state YAML for `projectDir`. Pure path join, no IO. The
 // resulting file lives next to any per-project `tools-runner.yaml` under `${projectDir}/.claude/`.
 export function statePath(projectDir: string): string {
@@ -62,7 +71,7 @@ export async function loadState(filePath: string): Promise<State> {
 // always reflects the post-prune shape. The write is published atomically via a sibling `.tmp` file plus
 // `fs.rename`. Rename failures propagate so the Stop hook's top-level `try/catch` can surface them as the
 // "cannot write state file" outcome (exit 1).
-export async function saveState(filePath: string, state: State, opts?: SaveStateOptions): Promise<void> {
+export async function saveState(filePath: string, state: State, opts?: SaveStateOptions): Promise<SaveStateResult> {
     const now: Date = opts?.now !== undefined ? opts.now : new Date();
     const ttlDays: number = opts?.ttlDays !== undefined ? opts.ttlDays : DEFAULT_TTL_DAYS;
     const ttlMillis: number = ttlDays * MS_PER_DAY;
@@ -79,6 +88,7 @@ export async function saveState(filePath: string, state: State, opts?: SaveState
         }
         survivingRuns.push(entry);
     }
+    const prunedCommandRuns: number = state.commandRuns.length - survivingRuns.length;
     state.commandRuns = survivingRuns;
 
     const keepKeys: Set<string> = new Set<string>();
@@ -87,18 +97,21 @@ export async function saveState(filePath: string, state: State, opts?: SaveState
             keepKeys.add(matchedPath);
         }
     }
-    const prunedFileHashes: Record<string, FileHashEntry> = {};
+    const fileHashesBefore: number = Object.keys(state.fileHashes).length;
+    const survivingFileHashes: Record<string, FileHashEntry> = {};
     for (const fileHashKey of Object.keys(state.fileHashes)) {
         if (keepKeys.has(fileHashKey)) {
-            prunedFileHashes[fileHashKey] = state.fileHashes[fileHashKey];
+            survivingFileHashes[fileHashKey] = state.fileHashes[fileHashKey];
         }
     }
-    state.fileHashes = prunedFileHashes;
+    const prunedFileHashes: number = fileHashesBefore - Object.keys(survivingFileHashes).length;
+    state.fileHashes = survivingFileHashes;
 
     const yamlText: string = YAML.stringify(state);
     const tmpPath: string = filePath + ".tmp";
     await fs.writeFile(tmpPath, yamlText);
     await fs.rename(tmpPath, filePath);
+    return { prunedCommandRuns, prunedFileHashes };
 }
 
 // Computes the deterministic content-addressed key for one prepared command. Identifies the command by its
