@@ -46,4 +46,18 @@ Run all tests and confirm they pass before marking this step complete.
 
 ## Summary
 
-_To be completed when this step is implemented._
+Implemented `./src/gate.ts` with the `GateDecision` interface and the `decideGate` async function exactly as specified:
+
+- Looks up the prior `CommandRunEntry` via `findCommandRun(state, prepared.commandKey)` (reusing the existing helper rather than re-deriving the lookup).
+- Computes `filesHash` via `aggregateHash(prepared.matchedFiles, state.fileHashes)`.
+- Branches: no prior entry returns `{ run: true, reason: "first run" }`; malformed `lastRunAt` writes one stderr diagnostic and falls through to the same first-run branch; cooldown not elapsed returns `{ run: false, reason: "in cooldown" }` regardless of hash (negative elapsed counts as in-cooldown); cooldown elapsed with matching hash returns `{ run: false, reason: "no file changes since last successful run" }`; cooldown elapsed with differing hash returns `{ run: true, reason: "files changed since last run" }`.
+- `cooldownSeconds` defaults to `60` (`prepared.command.cooldown ?? 60`) per the spec; in production the config loader already fills the default, so the `??` is defensive.
+
+Added `./src/test/gate.test.ts` covering all four branches plus the malformed `lastRunAt` stderr emission and a clock-skew (negative elapsed) sub-case. Tests construct `state` and `prepared` in memory and use `fs.mkdtemp` + `fs.writeFile` for the on-disk files needed by `aggregateHash`. The malformed-`lastRunAt` test installs a `jest.spyOn(process.stderr, "write")` to capture the single diagnostic line and asserts the literal string against the catalog entry from the main plan.
+
+Verification:
+- `bun run compile` passes.
+- `bun run test` passes (361 tests across 10 suites, including the 6 new `decideGate` cases).
+- `bun run smoke` not run for this step: the smoke script is a deliverable of step 14 and `scripts/smoke-tests.sh` does not yet exist. Step 11's verification block only requires compile + unit tests.
+
+Nothing diverged from the original step instructions; nothing was deferred.
