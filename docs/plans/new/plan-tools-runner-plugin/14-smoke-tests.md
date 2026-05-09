@@ -59,4 +59,40 @@ Run all tests and confirm they pass before marking this step complete.
 
 ## Summary
 
-_To be completed when this step is implemented._
+Created `scripts/hook-smoke-tests.sh` (4 cases) and `scripts/smoke-tests.sh` (21 scenarios), both bundle-driven via `bun run bundle`.
+
+**`hook-smoke-tests.sh`** covers the bundle's stdin / env contract:
+- malformed JSON exits 1 with the catalog stderr line
+- empty stdin exits 0
+- missing `CLAUDE_PROJECT_DIR` exits 1 with the catalog stderr line
+- `stop_hook_active: true` short-circuits before the env check (added beyond the original 3-case spec to cover the recursion guard, since the runner short-circuits before any project-dir validation)
+
+**`smoke-tests.sh`** scenarios:
+1. First-run executes (the originally specified scenario 1).
+2. Cooldown skip (re-run after scenario 1).
+3. Cooldown bypass via file change (`cooldown: "0s"`, modify `src/foo.ts`, re-run).
+4. Clean-slate after `rm .claude/tools-runner-state.yaml`.
+5. Per-file `${{file_path}}` template (race-free: per-file output names).
+6. Layered config: home + project YAMLs, fake `$HOME` via `mktemp -d`, asserts both display tags appear.
+7. State file shape validated by an inline `bun -e` snippet that round-trips the YAML and checks every required `commandRuns[0]` and `fileHashes` field.
+8. `group_by: packages/*/` + `${{group_dir}}`: two unique groups, asserts per-group fan-out.
+9. Brace expansion `**/*.{ts,tsx}`: confirms both extensions match, `.md` does not.
+10. Per-file `${{file_name}}` / `${{file_basename}}` / `${{file_ext}}`.
+11. `${{file_dir}}` per-directory fan-out: 3 files in 2 directories collapse to 2 invocations.
+12. Negation pattern `!**/excluded/**`.
+13. Multiple commands per trigger.
+14. Recursive config scan: subdirectory `.claude/tools-runner.yaml` discovered alongside the root YAML, each scoped to its own dir.
+15. Failing command (`exit 7`) surfaces `FAIL exit 7` in stdout while the hook itself still exits 0.
+16. Per-command log file under `.claude/tools-runner-log/YYYY-MM/DD/HH/*.log` captures `[OUT] ` and `[ERR] ` prefixed output.
+17. No matching files: `[tools-runner] no triggers matched, skipping`.
+18. Custom `cwd: "${{project}}/sub"` honoured.
+19. Per-command timeout (`sleep 5` with `timeout: "1s"`) reports `FAIL timeout`.
+20. Malformed project YAML exits 1 with `[tools-runner] failed to load .claude/tools-runner.yaml:` on stderr.
+21. Hash gate: after cooldown expires, an unchanged file set logs `no file changes since last successful run`.
+
+### Key decisions / divergences from the original step
+
+- The plan called for 7 scenarios; coverage was extended to 21 (and hook-smoke to 4) so every implemented feature plus every YAML example in `docs/CONFIGURATION.md` has an end-to-end smoke test.
+- `invoke_hook` runs in a `(cd "$proj_dir" && ...)` subshell. The runner resolves the per-command log directory off `process.cwd()`, which Claude Code sets to the project dir at runtime; the smoke harness mirrors that contract so scenario 16 finds the log files.
+- Scenario 7 round-trips the state YAML via `STATE_PATH=... bun -e ...` from `$PROJECT_DIR` (so the `yaml` package resolves). The original `bun -e ... "$state_path"` form did not pass argv into the eval'd script.
+- Scenario 19 asserts only `FAIL timeout` in stdout (not wall-clock duration). The runner correctly logs the timeout, but the hook process can still wait for the orphaned `sh`/`sleep` child to drain its piped stdio before Node-level termination; verifying that signal-propagation behaviour is out of scope for "the run is recorded as `FAIL timeout`".

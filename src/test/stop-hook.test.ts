@@ -518,6 +518,37 @@ describe("runStopHook", () => {
         expect(projectFiredExists).toBe(true);
     });
 
+    test("per-command log file lands under projectDir even when cwd is elsewhere", async () => {
+        // Regression: an earlier implementation resolved `runner.logBaseDir` from `process.cwd()`. In a
+        // session where Claude Code does not chdir into the project (or anything else mutates cwd), that
+        // produced log files outside the project tree. The fix routes `projectDir` into `runCommands` via
+        // `RunCommandsOptions.logBaseDir`, so this test pins the directory to projectDir and asserts that
+        // cwd plays no role in the resulting log path.
+        process.env["CLAUDE_PROJECT_DIR"] = projectDir;
+        process.env["HOME"] = homeDir;
+        await initGitRepo(projectDir);
+        await fs.mkdir(path.join(projectDir, ".claude"), { recursive: true });
+        await fs.writeFile(
+            path.join(projectDir, ".claude", "tools-runner.yaml"),
+            "triggers:\n  - paths:\n      - '**/*.ts'\n    commands:\n      - run: 'echo hi'\n        cooldown: '0s'\n        timeout: '30s'\n",
+        );
+        await fs.writeFile(path.join(projectDir, "x.ts"), "alpha");
+        // Stay chdir'd at `tempDir` (the parent of projectDir) so cwd is intentionally distinct.
+        expect(process.cwd()).toBe(tempDir);
+        restoreStdin();
+        restoreStdin = installStdin("{}");
+
+        await runHookAllowingExit();
+
+        expect(installedIO.captured.exitCode).toBe(null);
+        const projectLogRoot = path.join(projectDir, ".claude", "tools-runner-log");
+        const cwdLogRoot = path.join(tempDir, ".claude", "tools-runner-log");
+        const projectLogRootExists = await fileExists(projectLogRoot);
+        const cwdLogRootExists = await fileExists(cwdLogRoot);
+        expect(projectLogRootExists).toBe(true);
+        expect(cwdLogRootExists).toBe(false);
+    });
+
     test("invalid JSON on stdin writes the canonical stderr line and exits 1", async () => {
         process.env["CLAUDE_PROJECT_DIR"] = projectDir;
         process.env["HOME"] = homeDir;

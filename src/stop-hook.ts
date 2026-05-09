@@ -187,7 +187,9 @@ export async function runStopHook(): Promise<void> {
         return;
     }
 
-    const results = await runCommands(prepared, state, new Date());
+    const results = await runCommands(prepared, state, new Date(), {
+        logBaseDir: path.join(projectDir, ".claude", "tools-runner-log"),
+    });
 
     const stateFilePath = statePath(projectDir);
     await fs.mkdir(path.dirname(stateFilePath), { recursive: true });
