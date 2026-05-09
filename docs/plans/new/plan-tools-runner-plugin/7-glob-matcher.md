@@ -44,4 +44,14 @@ Run all tests and confirm they pass before marking this step complete.
 
 ## Summary
 
-_To be completed when this step is implemented._
+Implemented `matchFiles` in `src/matcher.ts` using `picomatch` with `{ dot: true }` and case-sensitive defaults:
+
+- Treats `undefined` and empty `paths` arrays identically (returns `[]`, never throws).
+- Splits `paths` into positive and negative compiled matchers in one pass; a leading `!` on a pattern flags it as a negation. If no positive patterns remain after the split (negation-only config), returns `[]`.
+- Strips a single leading `./` or `/` from each pattern body via `stripLeadingAnchor` before compiling, so users can write `/src/**/*.ts` or `./src/**/*.ts` and have them anchor to the scope root.
+- For each `ChangedFile`, requires at least one positive matcher hit and zero negation hits before keeping it. Iteration preserves input order and never deduplicates: two `ChangedFile`s with the same `path` but different `absPath` are both kept.
+- Brace expansion (`src/**/*.{ts,tsx}`) and dotfile matching (`**/.env`) work via picomatch defaults plus `dot: true`.
+
+Tests in `src/test/matcher.test.ts` cover all 11 cases listed in this step (single glob, OR across patterns, empty `paths`, undefined `paths`, dotfiles, brace expansion, negation excluding a subtree, negation-only matching nothing, leading-`/` strip, leading-`./` strip, case sensitivity, duplicate-path retention). `stripLeadingAnchor` is also exported and has its own direct unit tests (single `/`, single `./`, no anchor, `//` doubled prefix, `.//` doubled prefix, leading dot without slash, empty string) so every function in the module is directly tested per the project's testing rule.
+
+`bun run compile` passes; `bun run test` passes (235 tests across 7 suites, 19 new). `bun run smoke` and `bun run hook-smoke` are not runnable yet (script files arrive in step 14).

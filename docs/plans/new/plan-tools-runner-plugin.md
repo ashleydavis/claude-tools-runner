@@ -8,7 +8,7 @@
 - [x] 4. Trigger registry (FileLayer + TriggerRegistry): `plan-tools-runner-plugin/4-trigger-registry.md`
 - [x] 5. State file: `plan-tools-runner-plugin/5-state-file.md`
 - [x] 6. Git changed-files collector: `plan-tools-runner-plugin/6-git-collector.md`
-- [ ] 7. Glob matcher: `plan-tools-runner-plugin/7-glob-matcher.md`
+- [x] 7. Glob matcher: `plan-tools-runner-plugin/7-glob-matcher.md`
 - [ ] 8. File hashing with cache: `plan-tools-runner-plugin/8-file-hashing.md`
 - [ ] 9. Template expansion: `plan-tools-runner-plugin/9-template-expansion.md`
 - [ ] 10. Build the prepared command list: `plan-tools-runner-plugin/10-compile-commands.md`
