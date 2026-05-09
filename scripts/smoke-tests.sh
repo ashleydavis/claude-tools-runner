@@ -14,7 +14,7 @@ cd "$PROJECT_DIR"
 
 chmod +x "$0"
 
-bun run bundle >/dev/null
+bun run bundle >/dev/null 2>&1
 
 HOOK_BUNDLE="$PROJECT_DIR/plugin/dist/stop-hook.js"
 PLUGIN_ROOT="$PROJECT_DIR/plugin"
@@ -28,32 +28,41 @@ SCENARIO_NUM=0
 SCENARIO_NAME=""
 SCENARIO_FAILED=0
 
-# Resets the per-scenario state and prints a banner so the live output makes scenario boundaries clear.
-# Args: $1 = scenario number, $2 = scenario name.
+# Resets the per-scenario state. Args: $1 = scenario number, $2 = scenario name.
 start_scenario() {
     SCENARIO_NUM="$1"
     SCENARIO_NAME="$2"
     SCENARIO_FAILED=0
-    echo ""
-    echo "scenario $SCENARIO_NUM: $SCENARIO_NAME"
+    SCENARIO_FAIL_BUFFER=""
 }
 
-# Marks the active scenario as failed and prints an indented diagnostic line. Multiple `fail_assert`
-# calls inside a single scenario all keep the scenario in failure state but each diagnostic is shown.
+# Buffers an assertion failure diagnostic. The diagnostic is printed only after the FAIL line
+# so that passing scenarios produce a single line of output.
 fail_assert() {
-    echo "  assertion failed: $1"
+    SCENARIO_FAIL_BUFFER+="  $1"$'\n'
     SCENARIO_FAILED=1
+}
+
+# Buffers an indented dump of the given file's contents into the failure buffer so it prints
+# under the FAIL line alongside the assertion messages.
+fail_dump() {
+    while IFS= read -r dump_line || [ -n "$dump_line" ]; do
+        SCENARIO_FAIL_BUFFER+="    $dump_line"$'\n'
+    done < "$1"
 }
 
 # Emits the per-scenario PASS/FAIL line and updates the global counters.
 report() {
     if [ "$SCENARIO_FAILED" = "0" ]; then
-        echo "PASS: scenario $SCENARIO_NUM ($SCENARIO_NAME)"
+        echo "PASS: $SCENARIO_NAME"
         PASS_COUNT=$((PASS_COUNT + 1))
     else
-        echo "FAIL: scenario $SCENARIO_NUM ($SCENARIO_NAME)"
+        echo "FAIL: $SCENARIO_NAME"
+        if [ -n "$SCENARIO_FAIL_BUFFER" ]; then
+            printf '%s' "$SCENARIO_FAIL_BUFFER"
+        fi
         FAIL_COUNT=$((FAIL_COUNT + 1))
-        FAIL_NAMES+=("scenario $SCENARIO_NUM: $SCENARIO_NAME")
+        FAIL_NAMES+=("$SCENARIO_NAME")
     fi
 }
 
@@ -105,11 +114,11 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code (expected 0); stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if ! grep -qE "trigger 0 cmd 0.*PASS" "$stdout_file"; then
         fail_assert "stdout missing trigger-run line"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
     if [ ! -f "$SANDBOX_A/smoke.out" ]; then
         fail_assert "smoke.out does not exist"
@@ -135,11 +144,11 @@ scenario_2_cooldown_skip() {
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if ! grep -qF "in cooldown" "$stdout_file"; then
         fail_assert "stdout missing 'in cooldown' skip reason"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
     local after_mtime
     after_mtime=$(stat -c %Y "$SANDBOX_A/smoke.out")
@@ -178,13 +187,13 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     local after_mtime
     after_mtime=$(stat -c %Y "$SANDBOX_A/smoke.out")
     if [ "$after_mtime" -le "$before_mtime" ]; then
         fail_assert "smoke.out mtime did not advance (before=$before_mtime after=$after_mtime); stdout:"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
 
     rm -f "$stdout_file" "$stderr_file"
@@ -207,13 +216,13 @@ scenario_4_clean_slate_after_state_delete() {
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     local after_mtime
     after_mtime=$(stat -c %Y "$SANDBOX_A/smoke.out")
     if [ "$after_mtime" -le "$before_mtime" ]; then
         fail_assert "smoke.out mtime did not advance (before=$before_mtime after=$after_mtime); stdout:"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
 
     rm -f "$stdout_file" "$stderr_file"
@@ -250,7 +259,7 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
 
     if [ ! -f "$sandbox/per-file-x.md.log" ]; then
@@ -263,7 +272,7 @@ EOF
         fi
         if ! grep -qE 'a/x\.md$' "$sandbox/per-file-x.md.log"; then
             fail_assert "per-file-x.md.log line does not end in a/x.md"
-            sed 's/^/    /' "$sandbox/per-file-x.md.log"
+            fail_dump "$sandbox/per-file-x.md.log"
         fi
     fi
 
@@ -277,7 +286,7 @@ EOF
         fi
         if ! grep -qE 'b/y\.md$' "$sandbox/per-file-y.md.log"; then
             fail_assert "per-file-y.md.log line does not end in b/y.md"
-            sed 's/^/    /' "$sandbox/per-file-y.md.log"
+            fail_dump "$sandbox/per-file-y.md.log"
         fi
     fi
 
@@ -323,16 +332,16 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
 
     if ! grep -qF "~/.claude/tools-runner.yaml:trigger" "$stdout_file"; then
         fail_assert "stdout missing home YAML tag '~/.claude/tools-runner.yaml:trigger'"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
     if ! grep -qE "^\[tools-runner\] \.claude/tools-runner\.yaml:trigger" "$stdout_file"; then
         fail_assert "stdout missing project YAML tag '.claude/tools-runner.yaml:trigger'"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
 
     if [ ! -f "$fake_home/home.out" ]; then
@@ -378,7 +387,7 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
 
     local state_path="$sandbox/.claude/tools-runner-state.yaml"
@@ -465,7 +474,7 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if [ ! -f "$sandbox/packages/foo/group.out" ]; then
         fail_assert "packages/foo/group.out missing"
@@ -479,7 +488,7 @@ EOF
     fi
     if ! grep -qF "summary: 2 pass, 0 fail" "$stdout_file"; then
         fail_assert "expected exactly 2 PASS invocations (one per group); stdout:"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
 
     rm -f "$stdout_file" "$stderr_file"
@@ -515,7 +524,7 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if [ ! -f "$sandbox/brace-foo.ts.out" ]; then
         fail_assert "brace-foo.ts.out missing (.ts not matched by **/*.{ts,tsx})"
@@ -558,13 +567,13 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if [ ! -f "$sandbox/info-hello.out" ]; then
         fail_assert "info-hello.out missing"
     elif ! grep -qF "NAME=hello.txt BASE=hello EXT=.txt" "$sandbox/info-hello.out"; then
         fail_assert "info-hello.out content unexpected:"
-        sed 's/^/    /' "$sandbox/info-hello.out"
+        fail_dump "$sandbox/info-hello.out"
     fi
 
     rm -f "$stdout_file" "$stderr_file"
@@ -601,7 +610,7 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if [ ! -f "$sandbox/dirA/dir.out" ]; then
         fail_assert "dirA/dir.out missing"
@@ -611,7 +620,7 @@ EOF
     fi
     if ! grep -qF "summary: 2 pass, 0 fail" "$stdout_file"; then
         fail_assert "expected exactly 2 invocations (per-dir collapse); stdout:"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
 
     rm -f "$stdout_file" "$stderr_file"
@@ -647,7 +656,7 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if [ ! -f "$sandbox/neg-foo.ts.out" ]; then
         fail_assert "neg-foo.ts.out missing (foo.ts should match)"
@@ -688,7 +697,7 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if [ ! -f "$sandbox/a.out" ] || ! grep -qF "A" "$sandbox/a.out"; then
         fail_assert "a.out missing or wrong content"
@@ -698,7 +707,7 @@ EOF
     fi
     if ! grep -qF "summary: 2 pass, 0 fail" "$stdout_file"; then
         fail_assert "expected 2 PASS invocations (one per command); stdout:"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
 
     rm -f "$stdout_file" "$stderr_file"
@@ -743,7 +752,7 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if [ ! -f "$sandbox/root.out" ]; then
         fail_assert "root.out missing (root-level YAML did not fire)"
@@ -756,7 +765,7 @@ EOF
     fi
     if ! grep -qE '^\[tools-runner\] sub/\.claude/tools-runner\.yaml:trigger' "$stdout_file"; then
         fail_assert "stdout missing subdir display path 'sub/.claude/tools-runner.yaml'"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
 
     rm -f "$stdout_file" "$stderr_file"
@@ -790,15 +799,15 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "hook exit=$exit_code (expected 0; failures should not break the hook); stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if ! grep -qF "FAIL exit 7" "$stdout_file"; then
         fail_assert "stdout missing 'FAIL exit 7'"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
     if ! grep -qF "summary: 0 pass, 1 fail, 0 skip" "$stdout_file"; then
         fail_assert "stdout missing expected summary"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
 
     rm -f "$stdout_file" "$stderr_file"
@@ -832,7 +841,7 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     local log_files
     log_files=$(find "$sandbox/.claude/tools-runner-log" -type f -name '*.log' 2>/dev/null || true)
@@ -843,11 +852,11 @@ EOF
         first_log=$(printf '%s\n' "$log_files" | head -n1)
         if ! grep -qF "[OUT] HELLO_FROM_HOOK" "$first_log"; then
             fail_assert "log file missing '[OUT] HELLO_FROM_HOOK': $first_log"
-            sed 's/^/    /' "$first_log"
+            fail_dump "$first_log"
         fi
         if ! grep -qF "[ERR] BYE_STDERR" "$first_log"; then
             fail_assert "log file missing '[ERR] BYE_STDERR': $first_log"
-            sed 's/^/    /' "$first_log"
+            fail_dump "$first_log"
         fi
     fi
 
@@ -882,11 +891,11 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if ! grep -qF "[tools-runner] no triggers matched, skipping" "$stdout_file"; then
         fail_assert "stdout missing 'no triggers matched, skipping'"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
     if [ -f "$sandbox/never.out" ]; then
         fail_assert "never.out unexpectedly present (no command should have run)"
@@ -924,7 +933,7 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if [ ! -f "$sandbox/sub/out.log" ]; then
         fail_assert "sub/out.log missing (custom cwd not honoured)"
@@ -965,11 +974,11 @@ EOF
 
     if [ "$exit_code" != "0" ]; then
         fail_assert "exit=$exit_code; stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if ! grep -qF "FAIL timeout" "$stdout_file"; then
         fail_assert "stdout missing 'FAIL timeout'"
-        sed 's/^/    /' "$stdout_file"
+        fail_dump "$stdout_file"
     fi
 
     rm -f "$stdout_file" "$stderr_file"
@@ -999,11 +1008,11 @@ EOF
 
     if [ "$exit_code" != "1" ]; then
         fail_assert "exit=$exit_code (expected 1); stderr:"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
     if ! grep -qF "[tools-runner] failed to load .claude/tools-runner.yaml:" "$stderr_file"; then
         fail_assert "stderr missing '[tools-runner] failed to load .claude/tools-runner.yaml:'"
-        sed 's/^/    /' "$stderr_file"
+        fail_dump "$stderr_file"
     fi
 
     rm -f "$stdout_file" "$stderr_file"
@@ -1037,7 +1046,7 @@ EOF
     exit1=$(invoke_hook "$stdout1" "$stderr1" "$sandbox" "$fake_home")
     if [ "$exit1" != "0" ]; then
         fail_assert "first run exit=$exit1; stderr:"
-        sed 's/^/    /' "$stderr1"
+        fail_dump "$stderr1"
     fi
     if [ ! -f "$sandbox/hash.out" ]; then
         fail_assert "first run did not produce hash.out"
@@ -1056,11 +1065,11 @@ EOF
     exit2=$(invoke_hook "$stdout2" "$stderr2" "$sandbox" "$fake_home")
     if [ "$exit2" != "0" ]; then
         fail_assert "second run exit=$exit2; stderr:"
-        sed 's/^/    /' "$stderr2"
+        fail_dump "$stderr2"
     fi
     if ! grep -qF "no file changes since last successful run" "$stdout2"; then
         fail_assert "stdout missing hash-gate skip reason; second-run stdout:"
-        sed 's/^/    /' "$stdout2"
+        fail_dump "$stdout2"
     fi
     local second_mtime
     second_mtime=$(stat -c %Y "$sandbox/hash.out")
@@ -1095,14 +1104,7 @@ scenario_19_timeout_kills_command
 scenario_20_yaml_parse_error
 scenario_21_hash_gate_skip_after_cooldown_expires
 
-echo ""
-echo "================================"
-echo "smoke summary: $PASS_COUNT pass, $FAIL_COUNT fail"
-if [ "$FAIL_COUNT" -gt 0 ]; then
-    echo "failed scenarios:"
-    for failed_name in "${FAIL_NAMES[@]}"; do
-        echo "  - $failed_name"
-    done
-    exit 1
-fi
+TOTAL=$((PASS_COUNT + FAIL_COUNT))
+echo "Results: $PASS_COUNT/$TOTAL passed, $FAIL_COUNT failed"
+[ "$FAIL_COUNT" -eq 0 ] || exit 1
 exit 0

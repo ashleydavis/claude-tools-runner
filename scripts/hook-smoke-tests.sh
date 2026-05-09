@@ -14,7 +14,7 @@ cd "$PROJECT_DIR"
 
 chmod +x "$0"
 
-bun run bundle >/dev/null
+bun run bundle >/dev/null 2>&1
 
 HOOK_BUNDLE="$PROJECT_DIR/plugin/dist/stop-hook.js"
 PLUGIN_ROOT="$PROJECT_DIR/plugin"
@@ -90,9 +90,13 @@ run_test() {
         echo "  expected stderr substring: $expected_stderr_substring"
         echo "  expected stdout substring: $expected_stdout_substring"
         echo "  actual stderr:"
-        printf '%s\n' "$ACTUAL_STDERR" | sed 's/^/    /'
+        while IFS= read -r dump_line || [ -n "$dump_line" ]; do
+            echo "    $dump_line"
+        done <<< "$ACTUAL_STDERR"
         echo "  actual stdout:"
-        printf '%s\n' "$ACTUAL_STDOUT" | sed 's/^/    /'
+        while IFS= read -r dump_line || [ -n "$dump_line" ]; do
+            echo "    $dump_line"
+        done <<< "$ACTUAL_STDOUT"
         FAIL_COUNT=$((FAIL_COUNT + 1))
         FAIL_NAMES+=("$test_name")
     fi
@@ -110,14 +114,7 @@ run_test "missing CLAUDE_PROJECT_DIR exits 1 with catalog stderr" 1 "[tools-runn
 run_hook '{"stop_hook_active": true}' "no-project"
 run_test "stop_hook_active short-circuits before env check" 0 "" "[tools-runner] stop_hook_active set, skipping to avoid recursion"
 
-echo ""
-echo "================================"
-echo "hook-smoke summary: $PASS_COUNT pass, $FAIL_COUNT fail"
-if [ "$FAIL_COUNT" -gt 0 ]; then
-    echo "failed tests:"
-    for failed_name in "${FAIL_NAMES[@]}"; do
-        echo "  - $failed_name"
-    done
-    exit 1
-fi
+TOTAL=$((PASS_COUNT + FAIL_COUNT))
+echo "Results: $PASS_COUNT/$TOTAL passed, $FAIL_COUNT failed"
+[ "$FAIL_COUNT" -eq 0 ] || exit 1
 exit 0
