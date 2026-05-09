@@ -97,4 +97,20 @@ Run all tests and confirm they pass before marking this step complete.
 
 ## Summary
 
-_To be completed when this step is implemented._
+Implemented the Stop hook entry point that ties earlier modules together.
+
+Files added/changed:
+- `src/stop-hook.ts` (new): exports `readStdin`, `runStopHook`, and `main`. `readStdin` async-iterates `process.stdin`, caps the accumulated payload at 1 MiB, and rejects with the canonical message on overflow. `runStopHook` parses stdin, applies the recursion guard before any other IO, validates `CLAUDE_PROJECT_DIR`, scans for config files, builds the home + per-config `FileLayer`s, loads state, collects per-scope changed files, calls each layer's `compileCommands` with that layer's own scope, runs commands via `runCommands`, ensures the state directory exists, persists state, and prints the catalog summary line. `main` wraps `runStopHook` in a top-level `try/catch` that writes `String(err)` to stderr and exits 1. The auto-invocation is gated by `process.env["NODE_ENV"] !== "test"`.
+- `src/config.ts`: added `HOME_DISPLAY_PATH` constant (the literal `"~/.claude/tools-runner.yaml"`). The plan section 4.2 originally specified `homeDisplayPath()` as a function, but the value is a static string with no inputs, so a `const` matches the existing module-level constants (`DEFAULT_CWD_TEMPLATE`, `DEFAULT_COOLDOWN_SECONDS`, etc.) and is one fewer indirection at the call site.
+- `src/test/stop-hook.test.ts` (new): 17 tests covering the module guard (`NODE_ENV=test` no auto-run), `readStdin` (empty / normal / cap), `main` (happy path / exit propagation / top-level catch), and `runStopHook` (every catalog branch enumerated in the step spec — env unset, recursion guard, no triggers, no changes, parse error, nested config, scope isolation, home+project layered, JSON parse error, stdin cap).
+- `src/test/config.test.ts`: added two unit tests for `homeDisplayPath`.
+
+Key decisions / divergences:
+- The plan section 14.1 step 7-8 said to union all per-scope changed files and pass them to `registry.compileCommands(union)`. That breaks scope isolation (mandated by step 13's "Scope isolation" test) because `ChangedFile.path` is scope-relative — sibling-scope paths would be matched by another scope's globs. The hook now bypasses `registry.compileCommands` and calls each `FileLayer.compileCommands` directly with that layer's own scope's changes; the home layer receives the deduplicated union (its triggers operate on absolute `${{file_path}}` if at all). `registry.isEmpty()` is still used.
+- The hook ensures `dirname(statePath)` exists via `fs.mkdir(..., { recursive: true })` before `saveState`, since nested-config scenarios can have a `projectDir` whose `.claude/` directory does not yet exist.
+- Parse / validation errors from `FileLayer.create` are caught locally so the hook can emit the canonical `[tools-runner] failed to load ${sourceFile}: ${err.message}` stderr line and exit 1, instead of letting `main`'s catch-all surface a generic `String(err)`.
+
+Deferred:
+- The `hook_error` audit-log entry mentioned in the catalog row for parse errors is deferred to step 15 (Audit log). The stderr line is correct now; the audit-log persistence will be added when `IAuditLogger` gets its production implementation.
+- `runCommands` is still invoked without an `opts.logBaseDir`, so per-command logs land under `cwd/.claude/tools-runner-log`. This matches the plan; production `cwd` is the project dir under Claude Code.
+- `bun run smoke` is not yet runnable because `scripts/smoke-tests.sh` is created in step 14 (Smoke tests). `bun run compile`, `bun run test` (411/411), and `bun run bundle` (0.33 MB output) all pass.

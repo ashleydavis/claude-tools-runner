@@ -6,6 +6,7 @@ import { isMap, YAMLMap } from "yaml";
 import {
     byteOffsetToLineNumber,
     computeTriggerSourceLines,
+    HOME_DISPLAY_PATH,
     homeConfigPath,
     lineNumberOfNode,
     loadConfigFile,
@@ -345,6 +346,12 @@ describe("homeConfigPath", () => {
     test("returns the expected path when HOME is set", () => {
         process.env["HOME"] = "/tmp/fake-home";
         expect(homeConfigPath()).toBe(path.join("/tmp/fake-home", ".claude", "tools-runner.yaml"));
+    });
+});
+
+describe("HOME_DISPLAY_PATH", () => {
+    test("is the literal ~-prefixed path used in log output", () => {
+        expect(HOME_DISPLAY_PATH).toBe("~/.claude/tools-runner.yaml");
     });
 });
 

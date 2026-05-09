@@ -104,6 +104,11 @@ export function homeConfigPath(): string | null {
     return path.join(homeDir, ".claude", "tools-runner.yaml");
 }
 
+// Static display path for the home-level `tools-runner.yaml` used in log output and as the `sourceFile`
+// field of the home `FileLayer`. The literal `~` is preserved (not expanded) so log lines remain anchored
+// at a stable, user-recognisable string irrespective of the actual `$HOME` value.
+export const HOME_DISPLAY_PATH: string = "~/.claude/tools-runner.yaml";
+
 // Walks one directory, recording any `.claude/tools-runner.yaml` it contains and recursing into eligible subdirectories.
 // `results` is mutated in place. Subdirectory names are filtered by `shouldRecurseInto` before recursion.
 export async function scanDirectoryRecursive(currentDir: string, results: string[]): Promise<void> {
