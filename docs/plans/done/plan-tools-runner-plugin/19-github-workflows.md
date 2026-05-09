@@ -34,4 +34,9 @@ Create CI and publish workflows.
 
 ## Summary
 
-_To be completed when this step is implemented._
+Created two GitHub Actions workflows:
+
+- `.github/workflows/ci.yml`: triggers on `push` and `pull_request` (all branches). Single job `ci` on `ubuntu-latest` with steps: checkout (`actions/checkout@v4`), setup Bun (`oven-sh/setup-bun@v2` with `bun-version: latest`), `bun install`, `bun run compile`, `bun run test`, `bun run bundle`, `bash scripts/smoke-tests.sh`, `bash scripts/hook-smoke-tests.sh`.
+- `.github/workflows/publish.yml`: triggers only on tag pushes matching `v*.*.*`. Single job `publish` on `ubuntu-latest` with the same steps as CI, plus a final `Publish` step whose shell block contains a `# TODO: publish to Claude marketplace here` comment followed by `exit 1` so the workflow fails loudly until real publish logic is wired in.
+
+Verified both files parse as valid YAML and ran `/verify` (compile + unit tests + smoke tests) — all checks pass.

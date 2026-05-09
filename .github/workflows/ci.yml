@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Compile
+        run: bun run compile
+
+      - name: Test
+        run: bun run test
+
+      - name: Bundle
+        run: bun run bundle
+
+      - name: Smoke tests (e2e)
+        run: bash scripts/smoke-tests.sh
+
+      - name: Smoke tests (hook sanity)
+        run: bash scripts/hook-smoke-tests.sh

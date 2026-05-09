@@ -18,7 +18,7 @@
 - [x] 14. Smoke tests (bundle integrity + end-to-end behavior): `plan-tools-runner-plugin/14-smoke-tests.md`
 - [x] 15. Audit log: `plan-tools-runner-plugin/15-audit-log.md`
 - [x] 16. Update documentation: `plan-tools-runner-plugin/16-update-documentation.md`
-- [ ] 19. GitHub Workflows (CI + publish): `plan-tools-runner-plugin/19-github-workflows.md`
+- [x] 19. GitHub Workflows (CI + publish): `plan-tools-runner-plugin/19-github-workflows.md`
 
 ## Overview
 Build a new Claude Code plugin here called `tools-runner` that hooks the `Stop` event. When Claude finishes a turn, the hook inspects the current git repository for changed files (unstaged working-tree changes plus staged changes), matches those files against user-defined glob triggers in YAML, and runs the configured commands. Each command has its own cooldown window during which it will not be re-triggered, and the hook records a hash of the matched files so a command is re-run only when those files have actually changed since the last successful run. The plugin is built with Bun + TypeScript, prints debug info to stdout and errors to stderr (no audit log, no debug log), and dogfoods itself by running `bun run test` whenever its own TypeScript files change.
