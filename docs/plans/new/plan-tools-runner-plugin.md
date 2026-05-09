@@ -11,7 +11,7 @@
 - [x] 7. Glob matcher: `plan-tools-runner-plugin/7-glob-matcher.md`
 - [x] 8. File hashing with cache: `plan-tools-runner-plugin/8-file-hashing.md`
 - [x] 9. Template expansion: `plan-tools-runner-plugin/9-template-expansion.md`
-- [ ] 10. Build the prepared command list: `plan-tools-runner-plugin/10-compile-commands.md`
+- [x] 10. Build the prepared command list: `plan-tools-runner-plugin/10-compile-commands.md`
 - [ ] 11. Cooldown and hash gating: `plan-tools-runner-plugin/11-cooldown-gate.md`
 - [ ] 12. Command runner: `plan-tools-runner-plugin/12-command-runner.md`
 - [ ] 13. Stop hook entry point: `plan-tools-runner-plugin/13-stop-hook.md`

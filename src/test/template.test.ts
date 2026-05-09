@@ -4,6 +4,7 @@ import {
     expandPerFile,
     expandStatic,
     findGroupDir,
+    hasFileDirVariable,
     hasGroupDirVariable,
     hasPerFileVariable,
     shellQuote,
@@ -294,5 +295,39 @@ describe("hasGroupDirVariable", () => {
 
     test("is false for plain text without any variables", () => {
         expect(hasGroupDirVariable("npm test")).toBe(false);
+    });
+});
+
+describe("hasFileDirVariable", () => {
+    test("is true when ${{file_dir}} appears", () => {
+        expect(hasFileDirVariable("cd ${{file_dir}}")).toBe(true);
+    });
+
+    test("is false when ${{project}} appears", () => {
+        expect(hasFileDirVariable("cd ${{project}}")).toBe(false);
+    });
+
+    test("is false when ${{file_path}} appears", () => {
+        expect(hasFileDirVariable("cat ${{file_path}}")).toBe(false);
+    });
+
+    test("is false when ${{file_name}} appears", () => {
+        expect(hasFileDirVariable("echo ${{file_name}}")).toBe(false);
+    });
+
+    test("is false when ${{file_basename}} appears", () => {
+        expect(hasFileDirVariable("echo ${{file_basename}}")).toBe(false);
+    });
+
+    test("is false when ${{file_ext}} appears", () => {
+        expect(hasFileDirVariable("echo ${{file_ext}}")).toBe(false);
+    });
+
+    test("is false when ${{group_dir}} appears", () => {
+        expect(hasFileDirVariable("cd ${{group_dir}}")).toBe(false);
+    });
+
+    test("is false for plain text without any variables", () => {
+        expect(hasFileDirVariable("npm test")).toBe(false);
     });
 });

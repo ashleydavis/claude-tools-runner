@@ -27,6 +27,10 @@ const PER_FILE_VARIABLE_REGEX: RegExp = /\$\{\{(file_path|file_name|file_basenam
 // variable also defines `group_by`, and to choose the per-group fan-out tier in `compileCommands`.
 const GROUP_DIR_VARIABLE_REGEX: RegExp = /\$\{\{group_dir\}\}/;
 
+// Recogniser for `${{file_dir}}`. Used by `hasFileDirVariable` so `compileCommands` can detect the
+// per-directory fan-out tier (which fires when `${{file_dir}}` appears but no per-file variable does).
+const FILE_DIR_VARIABLE_REGEX: RegExp = /\$\{\{file_dir\}\}/;
+
 // Wraps `value` in single quotes and escapes embedded single quotes with the standard `'\''` sequence so
 // the result is safe to embed inside a `sh -c` command line. Always produces a quoted result, even for the
 // empty string (which becomes `''`). Used only by `expandPerFile` when `forShell === true`.
@@ -137,4 +141,10 @@ export function hasPerFileVariable(input: string): boolean {
 // trigger using `${{group_dir}}` also has `group_by` set, and to choose the per-group grouping tier.
 export function hasGroupDirVariable(input: string): boolean {
     return GROUP_DIR_VARIABLE_REGEX.test(input);
+}
+
+// Returns true if `${{file_dir}}` appears in `input`. Used by `compileCommands` to detect the
+// per-directory grouping tier (which kicks in when `${{file_dir}}` appears but no per-file variable does).
+export function hasFileDirVariable(input: string): boolean {
+    return FILE_DIR_VARIABLE_REGEX.test(input);
 }

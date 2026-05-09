@@ -69,4 +69,28 @@ Run all tests and confirm they pass before marking this step complete.
 
 ## Summary
 
-_To be completed when this step is implemented._
+Implemented the prepared-command compilation pipeline in `src/compile.ts`. The exported `compileCommands` function now filters changed files through `matchFiles` (step 7), resolves each file's group directory via `findGroupDir` (step 9, dropping mismatched files with the specified stderr warning), validates that every command using `${{group_dir}}` belongs to a trigger that declares `group_by`, and dispatches to one of four emission paths based on which template variables appear in `run`/`cwd`:
+
+- `emitPerFile` — fires when any per-file variable (`file_path`, `file_name`, `file_basename`, `file_ext`) appears.
+- `emitPerDirectory` — fires when only `${{file_dir}}` appears.
+- `emitPerGroup` — fires when only `${{group_dir}}` appears.
+- `emitPerTrigger` — falls through; uses `expandStatic` so only `${{project}}` is in scope.
+
+Each emission path runs through `buildCompiledCommand`, which centralises the `commandKey = sha256(expandedRun + 0x00 + expandedCwd)` derivation via `computeCommandKey`. The absolute group dir passed to `expandPerFile` is `path.join(scopeDir, relativeGroupDir)` so `${{group_dir}}` substitutes to the absolute path.
+
+Files changed:
+
+- `src/compile.ts` — full rewrite. Adds `IMatchedFileWithGroup` and the helpers `computeCommandKey`, `buildCompiledCommand`, `resolveGroupDirsForFiles`, `validateGroupDirUsage`, `emitPerFile`, `emitPerDirectory`, `emitPerGroup`, `emitPerTrigger`. Each is exported per the per-function-direct-test rule in `CLAUDE.md`.
+- `src/template.ts` — adds `FILE_DIR_VARIABLE_REGEX` and exports a new `hasFileDirVariable` helper used by `compileCommands` to detect the per-directory tier.
+- `src/test/compile.test.ts` — restructured around the new fan-out semantics. Covers per-file/per-dir/per-group/per-trigger granularity, `group_by` validation, `findGroupDir` dropping with warnings, content-addressed `commandKey` reuse across layers, and direct unit tests for every new helper.
+- `src/test/template.test.ts` — adds a `hasFileDirVariable` describe block.
+
+Decisions worth noting:
+
+- All new internal helpers are exported so they can be directly unit tested per the `CLAUDE.md` rule that every function should have its own tests.
+- The default `cwd` template (`${{project}}`) is now expanded through `expandStatic` for per-trigger emissions, so `expandedCwd` for an unset `cwd` resolves to `ctx.projectDir` (the layer's `scopeDir`). The pre-step-10 stub stored the raw `${{project}}` literal; existing tests that asserted on the literal were updated to expect the expanded value.
+- The `paths`-no-match-no-emit and `paths`-empty-no-emit cases are both routed through `matchFiles`, which already implements the `[]`/`undefined` semantics; no separate branch was needed in `compileCommands`.
+
+Verification: `bun run compile` passes; `bun run test` passes 355 tests across 9 suites. The `bun run smoke` target is not exercised here because the smoke harness (`scripts/smoke-tests.sh`) is scheduled for step 14 and has never existed in git history.
+
+Nothing was deferred.
