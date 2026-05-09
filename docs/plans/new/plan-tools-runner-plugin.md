@@ -10,7 +10,7 @@
 - [x] 6. Git changed-files collector: `plan-tools-runner-plugin/6-git-collector.md`
 - [x] 7. Glob matcher: `plan-tools-runner-plugin/7-glob-matcher.md`
 - [x] 8. File hashing with cache: `plan-tools-runner-plugin/8-file-hashing.md`
-- [ ] 9. Template expansion: `plan-tools-runner-plugin/9-template-expansion.md`
+- [x] 9. Template expansion: `plan-tools-runner-plugin/9-template-expansion.md`
 - [ ] 10. Build the prepared command list: `plan-tools-runner-plugin/10-compile-commands.md`
 - [ ] 11. Cooldown and hash gating: `plan-tools-runner-plugin/11-cooldown-gate.md`
 - [ ] 12. Command runner: `plan-tools-runner-plugin/12-command-runner.md`

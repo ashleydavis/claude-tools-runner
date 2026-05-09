@@ -79,4 +79,20 @@ Run all tests and confirm they pass before marking this step complete.
 
 ## Summary
 
-_To be completed when this step is implemented._
+Implemented variable expansion in `src/template.ts`:
+
+- Added `shellQuote(value)` — wraps in single quotes and escapes embedded single quotes via the `'\''` sequence; produces `''` for the empty string.
+- Added `expandStatic(input, ctx)` — replaces `${{project}}` with `ctx.projectDir`; throws if any per-file or `${{group_dir}}` variable appears.
+- Added `expandPerFile(input, ctx, file, groupDir, opts)` — replaces all seven supported variables; under `forShell: true` shell-quotes every per-file substitution including `${{group_dir}}` but not `${{project}}`; throws when `${{group_dir}}` appears with `groupDir === null`.
+- Added `findGroupDir(filePath, groupBy)` — strips a single trailing `/` from the pattern, then tests successively-longer segment prefixes (1..length-1) of `filePath` against `picomatch(strippedGroupBy, { dot: true })` and returns the first match or `null`.
+- Added `hasPerFileVariable(input)` — true when `${{file_path}}`, `${{file_name}}`, `${{file_basename}}`, or `${{file_ext}}` appears (intentionally excludes `${{file_dir}}`, `${{group_dir}}`, `${{project}}`).
+- Added `hasGroupDirVariable(input)` — true when `${{group_dir}}` appears.
+- Added `ExpandPerFileOptions` named interface (the project style ban on inline anonymous object types means the `opts` argument needed a named type).
+
+Internal recogniser: a single `/g`-flagged regex `\$\{\{(project|file_path|file_name|file_basename|file_ext|file_dir|group_dir)\}\}/g` drives both `expandStatic` and `expandPerFile` via `String.prototype.replace`. Two non-`/g` regexes back the `hasPerFileVariable` and `hasGroupDirVariable` helpers.
+
+`TemplateContext` (already existed) was kept as-is; it carries only `projectDir`.
+
+Tests added in `src/test/template.test.ts` covering every bullet from the step file: shell-quoting of empty/plain/quoted/metacharacter strings; static replacement and throw-on-per-file-variable for `expandStatic`; verbatim and shell-quoted per-file substitutions; the `archive.tar.gz` and `Makefile` edge cases; the `${{group_dir}}` null-throw under both `forShell` modes; the four `findGroupDir` cases plus a multi-segment-glob case and a one-segment-file case; and the predicate matrix for `hasPerFileVariable` / `hasGroupDirVariable`.
+
+`bun run compile` and `bun run test` pass (301 tests across 9 suites). `bun run smoke` fails because `scripts/smoke-tests.sh` does not exist yet — that script is delivered by step 14, which is still unchecked.
