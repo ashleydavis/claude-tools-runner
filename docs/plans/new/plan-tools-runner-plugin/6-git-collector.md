@@ -42,4 +42,40 @@ Run all tests and confirm they pass before marking this step complete.
 
 ## Summary
 
-_To be completed when this step is implemented._
+Implemented `src/git.ts` and `src/test/git.test.ts`. Files changed:
+
+- `src/git.ts` (new): exports `collectChangedFiles(scopeDir)`, `runGitCommand(scopeDir, gitArgs)`, and
+  `parsePorcelainV1Z(stdoutText)`. The collector spawns two git invocations: `git -C scopeDir rev-parse --show-toplevel`
+  to recover the repo root (needed because `git status --porcelain=v1` always reports paths relative to repo
+  root regardless of CWD or `status.relativePaths`), then `git -C scopeDir status --porcelain=v1 -z
+  --untracked-files=all`. Paths are resolved via `path.resolve(repoRoot, reportedPath)` and filtered to entries
+  whose absolute path starts with `scopeDir + path.sep`. Renames return the destination (the trailing source
+  path is consumed and discarded). Worktree-`D` entries are skipped. Results are deduplicated by absolute path.
+- `src/test/git.test.ts` (new): direct unit tests for `parsePorcelainV1Z` against canned porcelain byte
+  streams, plus integration tests for `collectChangedFiles` that mock `child_process.spawn` per call.
+- `__mocks__/child_process.ts` (new): manual Jest mock for `node:child_process` exposing `spawn` as a
+  `jest.fn()`. Loaded automatically when a test calls `jest.mock("node:child_process")`.
+
+Decisions and divergences from the original step instructions:
+
+- The plan specified returning the discriminated string literal `"git-missing"` when `git` is absent on
+  `$PATH`. Per follow-up feedback, this was changed to throw a plain `Error` with the message
+  `"git binary missing on PATH"` (preserving `code === "ENOENT"`), so the Stop hook (step 13) can detect the
+  missing-binary case via either the message substring or the error code while other failures propagate
+  unchanged. The signature is now `collectChangedFiles(scopeDir): Promise<ChangedFile[]>`.
+- The plan's command list was a single `git status` spawn. An additional `git rev-parse --show-toplevel` spawn
+  was added because empirical testing showed `git -C sub status --porcelain=v1 -z` reports paths relative to
+  the repo root, not relative to `sub`, so we cannot use `path.resolve(scopeDir, ...)` on the porcelain output
+  directly without first knowing the repo root.
+- Per follow-up feedback, the test suite does not invoke real `git` via `child_process.spawn`. The two probes
+  are mocked through the `__mocks__/child_process.ts` manual mock; this also sidesteps a Jest-worker quirk
+  where `process.env.PATH` mutations do not propagate to child spawns (which made the planned PATH-override
+  test for `git-missing` infeasible to run as written).
+- `parsePorcelainV1Z` and `runGitCommand` are exported (not file-private) so each can be unit-tested
+  directly: `parsePorcelainV1Z` against canned porcelain byte streams without any mocked spawn, and
+  `runGitCommand` through the spawn mock to cover its lifecycle (stdout capture, exit code, ENOENT mapping)
+  separately from the higher-level `collectChangedFiles` flow.
+
+Verification: `bun run compile` and `bun run test` both green (216 tests pass, including 10 new parser tests,
+9 new collector tests, and 6 new `runGitCommand` tests). Smoke tests are not yet applicable (the `scripts/` directory is empty until step
+14, and the `stop-hook.ts` entry point bundle target lands in step 13).
