@@ -200,7 +200,7 @@ Every entry has `type: string` (literal discriminator) and `timestamp: string` (
 }
 ```
 
-**`hook_completed`** is logged last, before `process.exit`. `skipReason` is present when the hook took an early-skip path; values are `"stop_hook_active"`, `"git_missing"`, `"env_unset"`, `"no_triggers"`, `"no_changed_files"`, `"no_match"`.
+**`hook_completed`** is logged last, before `process.exit`. `exitCode` is `0` when the hook finished cleanly (every command passed or every relevant gate skipped) and `2` when the hook hit a fatal error or any user command failed. Exit 2 is the documented Claude Code Stop-hook signal for "blocking error": Claude Code feeds the hook's stderr back to the model on the next turn so failures surface inside the conversation rather than only in the transcript. `skipReason` is present when the hook took an early-skip path; values are `"stop_hook_active"`, `"git_missing"`, `"env_unset"`, `"no_triggers"`, `"no_changed_files"`, `"no_match"`.
 
 ```json
 {
@@ -214,7 +214,7 @@ Every entry has `type: string` (literal discriminator) and `timestamp: string` (
 }
 ```
 
-**`hook_error`** is logged when the top-level `try/catch` catches an unhandled exception. `stack` is captured in the JSON file but omitted from the text rendering. `hook_error` is normally followed by a `hook_completed` with `exitCode: 1`, but `process.exit(1)` may fire before `hook_completed` is written, which is itself a useful signal.
+**`hook_error`** is logged when the top-level `try/catch` catches an unhandled exception. `stack` is captured in the JSON file but omitted from the text rendering. `hook_error` is normally followed by a `hook_completed` with `exitCode: 2`, but `process.exit(2)` may fire before `hook_completed` is written, which is itself a useful signal.
 
 ```json
 {

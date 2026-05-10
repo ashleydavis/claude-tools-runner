@@ -303,14 +303,17 @@ describe("main", () => {
         await main();
 
         expect(installedIO.captured.exitCode).toBe(null);
-        expect(joinedStdout(installedIO.captured)).toContain("[tools-runner] no triggers configured, skipping");
+        // Stop-hook stdout is reserved for structured JSON the model can consume; the no-triggers
+        // skip lives only in the audit log (which is also empty here because there is no scopeDir
+        // with any `.claude/` tree under it).
+        expect(joinedStdout(installedIO.captured)).toBe("");
         expect(joinedStderr(installedIO.captured)).toBe("");
     });
 
-    test("routes runStopHook's process.exit(1) through its catch and surfaces the same exit code", async () => {
-        // CLAUDE_PROJECT_DIR unset → runStopHook calls `process.exit(1)`, which the stubbed exit re-throws
+    test("routes runStopHook's process.exit(2) through its catch and surfaces the same exit code", async () => {
+        // CLAUDE_PROJECT_DIR unset → runStopHook calls `process.exit(2)`, which the stubbed exit re-throws
         // as `ProcessExitError`. `main`'s top-level catch then writes `String(err)` to stderr and itself
-        // calls `process.exit(1)`. Either way the captured exit code lands on 1.
+        // calls `process.exit(2)`. Either way the captured exit code lands on 2.
         delete process.env["CLAUDE_PROJECT_DIR"];
         restoreStdin();
         restoreStdin = installStdin("{}");
@@ -324,11 +327,11 @@ describe("main", () => {
             }
         }
 
-        expect(installedIO.captured.exitCode).toBe(1);
+        expect(installedIO.captured.exitCode).toBe(2);
         expect(joinedStderr(installedIO.captured)).toContain("[tools-runner] CLAUDE_PROJECT_DIR is not set");
     });
 
-    test("writes String(err) to stderr and exits 1 on an unhandled exception escaping runStopHook", async () => {
+    test("writes String(err) to stderr and exits 2 on an unhandled exception escaping runStopHook", async () => {
         // Replace `process.stdin` with a stream whose `for await` throws a synthetic Error. `readStdin`
         // does not catch this (only the cap branch is special-cased), so the error propagates out of
         // `runStopHook`, hits `main`'s top-level catch, and gets written as `String(err) + "\n"`.
@@ -360,7 +363,7 @@ describe("main", () => {
             }
         }
 
-        expect(installedIO.captured.exitCode).toBe(1);
+        expect(installedIO.captured.exitCode).toBe(2);
         expect(joinedStderr(installedIO.captured)).toContain("synthetic stdin failure");
     });
 });
@@ -392,7 +395,7 @@ describe("runStopHook", () => {
         await fs.rm(tempDir, { recursive: true, force: true });
     });
 
-    test("CLAUDE_PROJECT_DIR unset writes the canonical stderr line and exits 1", async () => {
+    test("CLAUDE_PROJECT_DIR unset writes the canonical stderr line and exits 2", async () => {
         delete process.env["CLAUDE_PROJECT_DIR"];
         process.env["HOME"] = homeDir;
         restoreStdin();
@@ -400,13 +403,15 @@ describe("runStopHook", () => {
 
         await runHookAllowingExit();
 
-        expect(installedIO.captured.exitCode).toBe(1);
+        expect(installedIO.captured.exitCode).toBe(2);
         expect(joinedStderr(installedIO.captured)).toContain("[tools-runner] CLAUDE_PROJECT_DIR is not set");
     });
 
     test("stop_hook_active=true short-circuits before scanning configs or env checks", async () => {
-        // Deliberately leave CLAUDE_PROJECT_DIR unset: if the recursion guard did NOT short-circuit before
-        // the env check, the hook would emit the "CLAUDE_PROJECT_DIR is not set" stderr line and exit 1.
+        // Deliberately leave CLAUDE_PROJECT_DIR unset: if the recursion guard did NOT short-circuit
+        // before the env check, the hook would emit the "CLAUDE_PROJECT_DIR is not set" stderr line
+        // and exit 2. The recursion guard fires before any audit log is opened, so both streams stay
+        // silent on the success path (Stop-hook stdout is reserved for JSON the model consumes).
         delete process.env["CLAUDE_PROJECT_DIR"];
         delete process.env["HOME"];
         restoreStdin();
@@ -415,11 +420,11 @@ describe("runStopHook", () => {
         await runHookAllowingExit();
 
         expect(installedIO.captured.exitCode).toBe(null);
-        expect(joinedStdout(installedIO.captured)).toBe("[tools-runner] stop_hook_active set, skipping to avoid recursion\n");
+        expect(joinedStdout(installedIO.captured)).toBe("");
         expect(joinedStderr(installedIO.captured)).toBe("");
     });
 
-    test("no triggers configured (no YAML files anywhere) prints the canonical skip line and exits 0", async () => {
+    test("no triggers configured (no YAML files anywhere) exits 0 silently", async () => {
         process.env["CLAUDE_PROJECT_DIR"] = projectDir;
         process.env["HOME"] = homeDir;
         restoreStdin();
@@ -428,10 +433,11 @@ describe("runStopHook", () => {
         await runHookAllowingExit();
 
         expect(installedIO.captured.exitCode).toBe(null);
-        expect(joinedStdout(installedIO.captured)).toContain("[tools-runner] no triggers configured, skipping");
+        // Stop-hook stdout is reserved for JSON; the no-triggers skip lives only in the audit log.
+        expect(joinedStdout(installedIO.captured)).toBe("");
     });
 
-    test("triggers configured but no changed files prints the canonical skip line and exits 0", async () => {
+    test("triggers configured but no changed files exits 0 silently with skipReason no_changed_files", async () => {
         process.env["CLAUDE_PROJECT_DIR"] = projectDir;
         process.env["HOME"] = homeDir;
         await initGitRepo(projectDir);
@@ -447,10 +453,14 @@ describe("runStopHook", () => {
         await runHookAllowingExit();
 
         expect(installedIO.captured.exitCode).toBe(null);
-        expect(joinedStdout(installedIO.captured)).toContain("[tools-runner] no changed files, skipping");
+        expect(joinedStdout(installedIO.captured)).toBe("");
+        const entries = await readAuditEntries(projectDir, new Date());
+        const completedEntry = entries.find(entry => entry.type === "hook_completed")!;
+        expect(completedEntry.skipReason).toBe("no_changed_files");
+        expect(completedEntry.exitCode).toBe(0);
     });
 
-    test("malformed YAML in any layer aborts with a parse-error stderr line and exits 1", async () => {
+    test("malformed YAML in any layer aborts with a parse-error stderr line and exits 2", async () => {
         process.env["CLAUDE_PROJECT_DIR"] = projectDir;
         process.env["HOME"] = homeDir;
         await initGitRepo(projectDir);
@@ -465,7 +475,7 @@ describe("runStopHook", () => {
 
         await runHookAllowingExit();
 
-        expect(installedIO.captured.exitCode).toBe(1);
+        expect(installedIO.captured.exitCode).toBe(2);
         const stderrText = joinedStderr(installedIO.captured);
         expect(stderrText).toContain("failed to parse YAML");
         // Project-layer trigger must NOT have run: the runner only emits PASS/FAIL/SKIP lines, none of
@@ -499,9 +509,12 @@ describe("runStopHook", () => {
         await runHookAllowingExit();
 
         expect(installedIO.captured.exitCode).toBe(null);
-        const stdoutText = joinedStdout(installedIO.captured);
-        expect(stdoutText).toContain("summary:");
-        expect(stdoutText).toContain("1 pass");
+        // Stop-hook stdout is reserved for JSON; pass/fail counts live in `hook_completed` instead.
+        expect(joinedStdout(installedIO.captured)).toBe("");
+        const entries = await readAuditEntries(subDir, new Date());
+        const completedEntry = entries.find(entry => entry.type === "hook_completed")!;
+        expect(completedEntry.pass).toBe(1);
+        expect(completedEntry.fail).toBe(0);
         const markerText = await fs.readFile(expectedProjectFile, "utf8");
         expect(markerText).toBe(subDir);
     });
@@ -557,8 +570,13 @@ describe("runStopHook", () => {
         await runHookAllowingExit();
 
         expect(installedIO.captured.exitCode).toBe(null);
-        const stdoutText = joinedStdout(installedIO.captured);
-        expect(stdoutText).toContain("2 pass");
+        // Stop-hook stdout is reserved for JSON; pass/fail counts live in `hook_completed` instead.
+        // `hook_completed` fans out to every layer's audit log, so either project or home logs work
+        // for asserting the global pass total.
+        expect(joinedStdout(installedIO.captured)).toBe("");
+        const entries = await readAuditEntries(projectDir, new Date());
+        const completedEntry = entries.find(entry => entry.type === "hook_completed")!;
+        expect(completedEntry.pass).toBe(2);
         const homeFiredExists = await fileExists(path.join(projectDir, "home-fired.txt"));
         const projectFiredExists = await fileExists(path.join(projectDir, "project-fired.txt"));
         expect(homeFiredExists).toBe(true);
@@ -596,7 +614,7 @@ describe("runStopHook", () => {
         expect(cwdLogRootExists).toBe(false);
     });
 
-    test("invalid JSON on stdin writes the canonical stderr line and exits 1", async () => {
+    test("invalid JSON on stdin writes the canonical stderr line and exits 2", async () => {
         process.env["CLAUDE_PROJECT_DIR"] = projectDir;
         process.env["HOME"] = homeDir;
         restoreStdin();
@@ -604,11 +622,11 @@ describe("runStopHook", () => {
 
         await runHookAllowingExit();
 
-        expect(installedIO.captured.exitCode).toBe(1);
+        expect(installedIO.captured.exitCode).toBe(2);
         expect(joinedStderr(installedIO.captured)).toContain("[tools-runner] stdin is not valid JSON:");
     });
 
-    test("stdin payload exceeding 1 MiB cap writes the canonical stderr line and exits 1", async () => {
+    test("stdin payload exceeding 1 MiB cap writes the canonical stderr line and exits 2", async () => {
         process.env["CLAUDE_PROJECT_DIR"] = projectDir;
         process.env["HOME"] = homeDir;
         const oversized = "x".repeat(1024 * 1024 + 1);
@@ -617,7 +635,7 @@ describe("runStopHook", () => {
 
         await runHookAllowingExit();
 
-        expect(installedIO.captured.exitCode).toBe(1);
+        expect(installedIO.captured.exitCode).toBe(2);
         expect(joinedStderr(installedIO.captured)).toContain("[tools-runner] stdin payload exceeded 1 MiB cap");
     });
 
@@ -701,7 +719,7 @@ describe("runStopHook", () => {
         expect(projectResultEntries[0].outcome).toBe("pass");
     });
 
-    test("YAML parse error writes a hook_error audit-log entry, the canonical stderr line, and exits 1", async () => {
+    test("YAML parse error writes a hook_error audit-log entry, the canonical stderr line, and exits 2", async () => {
         process.env["CLAUDE_PROJECT_DIR"] = projectDir;
         process.env["HOME"] = homeDir;
         await initGitRepo(projectDir);
@@ -712,7 +730,7 @@ describe("runStopHook", () => {
 
         await runHookAllowingExit();
 
-        expect(installedIO.captured.exitCode).toBe(1);
+        expect(installedIO.captured.exitCode).toBe(2);
         expect(joinedStderr(installedIO.captured)).toContain("failed to load .claude/claude-tools-runner.yaml");
         const entries = await readAuditEntries(projectDir, new Date());
         const types = entries.map(entry => entry.type);

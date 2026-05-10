@@ -14,11 +14,9 @@ setup:
     foo.ts: ""
 
 steps:
-  - description: "both commands run; summary reports 2 pass"
+  - description: "both commands run; both outputs land on disk"
     expect:
       exit: 0
-      stdout_substrings:
-        - "summary: 2 pass, 0 fail"
       file_contains:
         - path: a.out
           substring: A

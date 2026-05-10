@@ -1,4 +1,4 @@
-description: "failing command surfaces FAIL but does not break the hook"
+description: "failing command surfaces FAIL on stderr and exits 2 so Claude Code wakes the model"
 
 setup:
   git_init:
@@ -13,9 +13,17 @@ setup:
     foo.ts: ""
 
 steps:
-  - description: "hook exits 0; stdout reports FAIL exit 7 and 1 fail in summary"
+  - description: "hook exits 2; stderr reports FAIL exit=7 and 0 pass / 1 fail / 0 skip summary"
     expect:
-      exit: 0
-      stdout_substrings:
-        - "FAIL exit 7"
+      exit: 2
+      stderr_substrings:
+        - 'FAIL .claude/claude-tools-runner.yaml:5 "exit 7" exit=7'
         - "summary: 0 pass, 1 fail, 0 skip"
+      find_file_contains:
+        - search_dir: .claude/claude-tools-runner/log
+          pattern: "*.json"
+          min_depth: 0
+          substrings:
+            - '"type":"hook_completed"'
+            - '"fail":1'
+            - '"exitCode":2'

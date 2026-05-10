@@ -34,8 +34,6 @@ steps:
   - description: "all three layers fire; each gets isolated state; parent has none"
     expect:
       exit: 0
-      stdout_substrings:
-        - "summary: 3 pass, 0 fail"
       file_exists:
         - repoA/a-fired.txt
         - repoA/sub/sub-fired.txt

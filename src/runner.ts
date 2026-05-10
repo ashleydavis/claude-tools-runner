@@ -248,7 +248,8 @@ export async function runOneCommand(prepared: CompiledCommand, state: State, now
         reason: gate.reason,
     });
     if (!gate.run) {
-        process.stdout.write(`[tools-runner] ${prepared.sourceFile}:trigger ${prepared.triggerIndexInFile} cmd ${prepared.commandIndex} cwd=${prepared.expandedCwd} run=${prepared.expandedRun}: SKIP ${gate.reason}\n`);
+        // Skip narration is recorded in the audit log via the `gate_decision` entry above; stdout
+        // stays silent because Claude Code parses Stop-hook stdout as JSON on exit 0.
         return {
             prepared,
             exitCode: 0,
@@ -383,21 +384,10 @@ export async function runOneCommand(prepared: CompiledCommand, state: State, now
             lastFilesHash: gate.filesHash,
             matchedFiles: prepared.matchedFiles.map(file => file.absPath).sort(),
         });
-        process.stdout.write(`[tools-runner] ${prepared.sourceFile}:trigger ${prepared.triggerIndexInFile} cmd ${prepared.commandIndex} cwd=${prepared.expandedCwd} run=${prepared.expandedRun}: PASS ${gate.reason} (log: ${logFile})\n`);
+        // PASS narration is recorded in the audit log via `command_result`; stdout stays silent.
     }
-    else {
-        let reason: string;
-        if (timedOut) {
-            reason = "timeout";
-        }
-        else if (error !== undefined) {
-            reason = error;
-        }
-        else {
-            reason = `exit ${exitCode}`;
-        }
-        process.stdout.write(`[tools-runner] ${prepared.sourceFile}:trigger ${prepared.triggerIndexInFile} cmd ${prepared.commandIndex} cwd=${prepared.expandedCwd} run=${prepared.expandedRun}: FAIL ${reason} (log: ${logFile})\n`);
-    }
+    // FAIL narration is recorded in the audit log via `command_result` and re-emitted to stderr
+    // with the rest of the failed-command summary by `runStopHook`; stdout stays silent.
 
     return {
         prepared,

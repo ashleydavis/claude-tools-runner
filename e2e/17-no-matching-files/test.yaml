@@ -1,4 +1,4 @@
-description: "no matching files reports 'no triggers matched, skipping'"
+description: "no matching files takes the no_match skip path silently"
 
 setup:
   git_init:
@@ -13,10 +13,15 @@ setup:
     bar.txt: ""
 
 steps:
-  - description: "stdout announces skip; no command runs"
+  - description: "audit log records the no_match skipReason; no command runs"
     expect:
       exit: 0
-      stdout_substrings:
-        - "[tools-runner] no triggers matched, skipping"
       file_not_exists:
         - never.out
+      find_file_contains:
+        - search_dir: .claude/claude-tools-runner/log
+          pattern: "*.json"
+          min_depth: 0
+          substrings:
+            - '"type":"hook_completed"'
+            - '"skipReason":"no_match"'

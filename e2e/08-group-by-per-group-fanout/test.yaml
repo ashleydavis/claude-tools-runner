@@ -20,8 +20,6 @@ steps:
   - description: "exactly two PASS invocations, one per package group"
     expect:
       exit: 0
-      stdout_substrings:
-        - "summary: 2 pass, 0 fail"
       file_contains:
         - path: packages/foo/group.out
           substring: GROUP

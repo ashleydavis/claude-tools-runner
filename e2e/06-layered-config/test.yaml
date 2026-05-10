@@ -23,10 +23,6 @@ steps:
   - description: "home and project layers both fire and write to their own roots"
     expect:
       exit: 0
-      stdout_substrings:
-        - "~/.claude/claude-tools-runner.yaml:trigger"
-      stdout_regex:
-        - "^\\[tools-runner\\] \\.claude/claude-tools-runner\\.yaml:trigger"
       file_contains:
         - path: ${HOME_DIR}/home.out
           substring: HOME_OK

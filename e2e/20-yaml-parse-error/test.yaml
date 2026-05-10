@@ -1,4 +1,4 @@
-description: "malformed YAML in project config exits 1"
+description: "malformed YAML in project config exits 2"
 
 setup:
   git_init:
@@ -8,8 +8,8 @@ setup:
       triggers: [ { paths: ["**/*.ts"], commands: [
 
 steps:
-  - description: "hook exits 1 with the catalog stderr message"
+  - description: "hook exits 2 with the catalog stderr message so Claude Code feeds the parse error back to the model"
     expect:
-      exit: 1
+      exit: 2
       stderr_substrings:
         - "[tools-runner] failed to load .claude/claude-tools-runner.yaml:"

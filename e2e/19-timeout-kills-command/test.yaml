@@ -1,4 +1,4 @@
-description: "per-command timeout kills the process and surfaces FAIL timeout"
+description: "per-command timeout kills the process and surfaces FAIL timeout on stderr with exit 2"
 
 setup:
   git_init:
@@ -14,8 +14,9 @@ setup:
     foo.ts: ""
 
 steps:
-  - description: "stdout reports 'FAIL timeout'"
+  - description: "stderr reports FAIL ... timeout and the hook exits 2"
     expect:
-      exit: 0
-      stdout_substrings:
-        - "FAIL timeout"
+      exit: 2
+      stderr_substrings:
+        - 'FAIL .claude/claude-tools-runner.yaml:5 "sleep 5" timeout'
+        - "summary: 0 pass, 1 fail, 0 skip"

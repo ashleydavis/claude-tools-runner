@@ -16,8 +16,6 @@ steps:
   - description: "first-run executes"
     expect:
       exit: 0
-      stdout_regex:
-        - "trigger 0 cmd 0.*PASS"
       file_contains:
         - path: smoke.out
           substring: SMOKE_OK
@@ -28,8 +26,12 @@ steps:
         smoke_before_step2: smoke.out
     expect:
       exit: 0
-      stdout_substrings:
-        - "in cooldown"
+      find_file_contains:
+        - search_dir: .claude/claude-tools-runner/log
+          pattern: "*.json"
+          min_depth: 0
+          substrings:
+            - '"reason":"in cooldown"'
       mtime_unchanged:
         - path: smoke.out
           slot: smoke_before_step2

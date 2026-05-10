@@ -224,14 +224,16 @@ export interface IAuditHookCompletedEntry extends IAuditEntryBase {
     fail: number;
     // Number of commands that the gate decided to skip without spawning.
     skip: number;
-    // Process exit code: 0 on the happy path or a non-error skip, 1 on a fatal error.
-    exitCode: 0 | 1;
+    // Process exit code: 0 on the happy path or a non-error skip, 2 on a fatal error or any
+    // command failure (Claude Code treats Stop-hook exit 2 as blocking and feeds stderr back to
+    // the model so the failure is surfaced into the next turn).
+    exitCode: 0 | 2;
     // Tag identifying which early-skip path fired (when applicable). Absent on the full pipeline path.
     skipReason?: HookSkipReason;
 }
 
 // Emitted by the top-level `try/catch` when an unhandled exception escapes the hook body. Followed (best
-// effort) by a `hook_completed` entry with `exitCode: 1`.
+// effort) by a `hook_completed` entry with `exitCode: 2`.
 export interface IAuditHookErrorEntry extends IAuditEntryBase {
     type: "hook_error";
     // Error message (`Error.message`) of the unhandled exception.

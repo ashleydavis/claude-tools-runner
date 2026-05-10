@@ -26,8 +26,6 @@ steps:
   - description: "both layers fire; each layer has exactly one run file; nested run does not leak to parent"
     expect:
       exit: 0
-      stdout_substrings:
-        - "summary: 2 pass, 0 fail"
       file_exists:
         - parent-fired.txt
         - nested/nested-fired.txt

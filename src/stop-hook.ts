@@ -86,7 +86,7 @@ export async function runStopHook(): Promise<void> {
 
     // Writes a `hook_completed` audit entry, but only when `hook_started` was already written. Skipping
     // when no `hook_started` was logged keeps the (start, completed) pair invariant intact.
-    const logCompleted = async (exitCode: 0 | 1, skipReason?: HookSkipReason): Promise<void> => {
+    const logCompleted = async (exitCode: 0 | 2, skipReason?: HookSkipReason): Promise<void> => {
         if (!hookStartedLogged) {
             return;
         }
@@ -110,7 +110,7 @@ export async function runStopHook(): Promise<void> {
         const stdinErr = caughtErr as Error;
         if (stdinErr.message === "stdin payload exceeded 1 MiB cap") {
             process.stderr.write("[tools-runner] stdin payload exceeded 1 MiB cap\n");
-            process.exit(1);
+            process.exit(2);
             return;
         }
         throw caughtErr;
@@ -127,7 +127,7 @@ export async function runStopHook(): Promise<void> {
         catch (caughtErr) {
             const parseErr = caughtErr as Error;
             process.stderr.write(`[tools-runner] stdin is not valid JSON: ${parseErr.message}\n`);
-            process.exit(1);
+            process.exit(2);
             return;
         }
     }
@@ -154,7 +154,9 @@ export async function runStopHook(): Promise<void> {
                 // line so Claude's session is never wedged by a broken log directory.
             }
         }
-        process.stdout.write("[tools-runner] stop_hook_active set, skipping to avoid recursion\n");
+        // Stop hooks must keep stdout silent on the success path: Claude Code only parses stdout for
+        // structured JSON, and any other output is debug-log noise that never reaches the user. The
+        // recursion-skip path is recorded in the audit log via `logCompleted("stop_hook_active")`.
         await logCompleted(0, "stop_hook_active");
         return;
     }
@@ -162,7 +164,7 @@ export async function runStopHook(): Promise<void> {
     const projectDir = process.env["CLAUDE_PROJECT_DIR"];
     if (!projectDir) {
         process.stderr.write("[tools-runner] CLAUDE_PROJECT_DIR is not set\n");
-        process.exit(1);
+        process.exit(2);
         return;
     }
 
@@ -174,7 +176,7 @@ export async function runStopHook(): Promise<void> {
     }
     catch (caughtErr) {
         process.stderr.write(`[tools-runner] failed to scan for config files: ${(caughtErr as Error).message}\n`);
-        process.exit(1);
+        process.exit(2);
         return;
     }
 
@@ -268,17 +270,12 @@ export async function runStopHook(): Promise<void> {
                 runsDir: layerRunsDir,
                 logBaseDir: layerLogBaseDir,
             });
-            if (slot.hasFileBackedState) {
-                process.stdout.write(`[tools-runner] loaded ${slot.displayPath} (${slot.layer.triggerCount()} triggers); state=${layerHashesPath}, runs=${layerRunsDir}, log=${layerLogBaseDir}\n`);
-            }
-            else {
-                process.stdout.write(`[tools-runner] loaded ${slot.displayPath} (${slot.layer.triggerCount()} triggers)\n`);
-            }
+            // Layer-load narration lives only in the audit log; stdout stays silent because Claude
+            // Code parses it as JSON on exit 0 and discards it otherwise.
         }
 
         const allEmpty = layers.every(slot => slot.layer !== undefined && slot.layer.isEmpty());
         if (allEmpty) {
-            process.stdout.write("[tools-runner] no triggers configured, skipping\n");
             await logCompleted(0, "no_triggers");
             return;
         }
@@ -301,7 +298,7 @@ export async function runStopHook(): Promise<void> {
             catch (caughtErr) {
                 const gitErr = caughtErr as NodeJS.ErrnoException;
                 if (gitErr.code === "ENOENT") {
-                    process.stdout.write("[tools-runner] git binary not found on PATH, skipping\n");
+                    // Recorded in the audit log via the `git_missing` skip reason; stdout stays silent.
                     await logCompleted(0, "git_missing");
                     return;
                 }
@@ -334,7 +331,7 @@ export async function runStopHook(): Promise<void> {
         });
 
         if (totalChanged === 0) {
-            process.stdout.write("[tools-runner] no changed files, skipping\n");
+            // Recorded in the audit log via the `no_changed_files` skip reason; stdout stays silent.
             await logCompleted(0, "no_changed_files");
             return;
         }
@@ -381,7 +378,7 @@ export async function runStopHook(): Promise<void> {
             totalPrepared += compiled.length;
         }
         if (totalPrepared === 0) {
-            process.stdout.write("[tools-runner] no triggers matched, skipping\n");
+            // Recorded in the audit log via the `no_match` skip reason; stdout stays silent.
             await logCompleted(0, "no_match");
             return;
         }
@@ -443,6 +440,7 @@ export async function runStopHook(): Promise<void> {
             });
         }
 
+        const failedResults: RunResult[] = [];
         for (const layerResults of resultsByLayer) {
             for (const result of layerResults) {
                 if (result.logFile === "") {
@@ -453,10 +451,25 @@ export async function runStopHook(): Promise<void> {
                 }
                 else {
                     failCount += 1;
+                    failedResults.push(result);
                 }
             }
         }
-        process.stdout.write(`[tools-runner] summary: ${passCount} pass, ${failCount} fail, ${skipCount} skip\n`);
+        if (failCount > 0) {
+            // Surface each failed command (and the run-summary) on stderr so Claude Code (which feeds
+            // Stop-hook stderr back to the model when the hook exits 2) sees the failure reasons in the
+            // next turn. Nothing goes to stdout: Claude Code parses Stop-hook stdout as JSON and treats
+            // anything else as debug-log-only noise.
+            for (const failedResult of failedResults) {
+                const sourceLocation = `${failedResult.prepared.sourceFile}:${failedResult.prepared.commandSourceLine}`;
+                const failureDetail = failedResult.error !== undefined ? failedResult.error : `exit=${failedResult.exitCode}`;
+                process.stderr.write(`[tools-runner] FAIL ${sourceLocation} "${failedResult.prepared.expandedRun}" ${failureDetail} log=${failedResult.logFile}\n`);
+            }
+            process.stderr.write(`[tools-runner] summary: ${passCount} pass, ${failCount} fail, ${skipCount} skip\n`);
+            await logCompleted(2);
+            process.exit(2);
+            return;
+        }
         await logCompleted(0);
     }
     catch (caughtErr) {
@@ -467,11 +480,11 @@ export async function runStopHook(): Promise<void> {
             message: err.message,
             stack: err.stack,
         });
-        await logCompleted(1);
+        await logCompleted(2);
         if (!(caughtErr instanceof HookHandledError)) {
             process.stderr.write(`${String(caughtErr)}\n`);
         }
-        process.exit(1);
+        process.exit(2);
     }
 }
 
@@ -485,7 +498,7 @@ export async function main(): Promise<void> {
     }
     catch (caughtErr) {
         process.stderr.write(`${String(caughtErr)}\n`);
-        process.exit(1);
+        process.exit(2);
     }
 }
 

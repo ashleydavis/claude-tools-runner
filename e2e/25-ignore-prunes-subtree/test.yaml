@@ -18,10 +18,15 @@ setup:
     src/file.txt: ""
 
 steps:
-  - description: "root command runs; malformed config inside ignored subtree is never loaded (exit 0 instead of the parse-error exit 1)"
+  - description: "root command runs; malformed config inside ignored subtree is never loaded (exit 0 instead of the parse-error exit 2)"
     expect:
       exit: 0
       file_exists:
         - root.out
-      stdout_substrings:
-        - "loaded .claude/claude-tools-runner.yaml"
+      find_file_contains:
+        - search_dir: .claude/claude-tools-runner/log
+          pattern: "*.json"
+          min_depth: 0
+          substrings:
+            - '"type":"config_load"'
+            - '"filePath":".claude/claude-tools-runner.yaml"'

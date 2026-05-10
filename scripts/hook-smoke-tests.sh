@@ -103,16 +103,16 @@ run_test() {
 }
 
 run_hook "not-json" "with-project"
-run_test "malformed JSON exits 1 with catalog stderr" 1 "[tools-runner] stdin is not valid JSON:"
+run_test "malformed JSON exits 2 with catalog stderr" 2 "[tools-runner] stdin is not valid JSON:"
 
 run_hook "" "with-project"
 run_test "empty stdin exits 0" 0 ""
 
 run_hook "{}" "no-project"
-run_test "missing CLAUDE_PROJECT_DIR exits 1 with catalog stderr" 1 "[tools-runner] CLAUDE_PROJECT_DIR is not set"
+run_test "missing CLAUDE_PROJECT_DIR exits 2 with catalog stderr" 2 "[tools-runner] CLAUDE_PROJECT_DIR is not set"
 
 run_hook '{"stop_hook_active": true}' "no-project"
-run_test "stop_hook_active short-circuits before env check" 0 "" "[tools-runner] stop_hook_active set, skipping to avoid recursion"
+run_test "stop_hook_active short-circuits before env check" 0 ""
 
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo "Results: $PASS_COUNT/$TOTAL passed, $FAIL_COUNT failed"

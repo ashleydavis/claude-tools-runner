@@ -19,8 +19,6 @@ steps:
   - description: "exactly two invocations (one per directory) and one dir.out per directory"
     expect:
       exit: 0
-      stdout_substrings:
-        - "summary: 2 pass, 0 fail"
       file_exists:
         - dirA/dir.out
         - dirB/dir.out
