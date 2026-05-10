@@ -37,6 +37,7 @@ function makeTrigger(paths: string[], runCommands: string[], sourceLine: number)
         cwd: "${{project}}",
         cooldown: 60,
         timeout: 300,
+        sourceLine,
     }));
     return {
         paths,
@@ -457,7 +458,7 @@ describe("evaluateLayerMatches", () => {
 
     test("renders patterns as [] when the trigger has no paths declared", () => {
         const trigger: Trigger = {
-            commands: [{ run: "echo hi" }],
+            commands: [{ run: "echo hi", sourceLine: 1 }],
             sourceLine: 1,
         };
         const changed: ChangedFile[] = [makeChangedFile("/abs/scope", "src/a.ts")];

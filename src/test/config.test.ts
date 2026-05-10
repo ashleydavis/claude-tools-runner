@@ -599,6 +599,7 @@ describe("parseTrigger", () => {
             { paths: ["a.ts"], commands: [{ run: "echo" }] },
             0,
             42,
+            [43],
         );
         expect(trigger.sourceLine).toBe(42);
         expect(trigger.paths).toEqual(["a.ts"]);
@@ -606,10 +607,11 @@ describe("parseTrigger", () => {
         expect(trigger.commands[0].cwd).toBe("${{project}}");
         expect(trigger.commands[0].cooldown).toBe(60);
         expect(trigger.commands[0].timeout).toBe(300);
+        expect(trigger.commands[0].sourceLine).toBe(43);
     });
 
     test("omits paths when not present in the raw trigger", () => {
-        const trigger: Trigger = parseTrigger({ commands: [{ run: "echo" }] }, 0, 1);
+        const trigger: Trigger = parseTrigger({ commands: [{ run: "echo" }] }, 0, 1, [2]);
         expect(trigger.paths).toBeUndefined();
     });
 
@@ -618,27 +620,28 @@ describe("parseTrigger", () => {
             { paths: [], commands: [{ run: "echo" }] },
             0,
             1,
+            [2],
         );
         expect(trigger.paths).toEqual([]);
     });
 
     test("rejects when the trigger is null", () => {
-        expect(() => parseTrigger(null, 0, 1)).toThrow(/must be a YAML mapping/);
+        expect(() => parseTrigger(null, 0, 1, [])).toThrow(/must be a YAML mapping/);
     });
 
     test("rejects when the trigger is an array", () => {
-        expect(() => parseTrigger([], 0, 1)).toThrow(/must be a YAML mapping/);
+        expect(() => parseTrigger([], 0, 1, [])).toThrow(/must be a YAML mapping/);
     });
 
     test("rejects when paths is a string instead of an array", () => {
         expect(() =>
-            parseTrigger({ paths: "src/**", commands: [{ run: "echo" }] }, 0, 1),
+            parseTrigger({ paths: "src/**", commands: [{ run: "echo" }] }, 0, 1, [2]),
         ).toThrow(/paths must be an array of strings/);
     });
 
     test("rejects when paths contains a non-string entry", () => {
         expect(() =>
-            parseTrigger({ paths: ["a", 5], commands: [{ run: "echo" }] }, 0, 1),
+            parseTrigger({ paths: ["a", 5], commands: [{ run: "echo" }] }, 0, 1, [2]),
         ).toThrow(/paths\[1\] must be a string/);
     });
 
@@ -648,6 +651,7 @@ describe("parseTrigger", () => {
                 { paths: ["a"], group_by: "", commands: [{ run: "echo" }] },
                 0,
                 1,
+                [2],
             ),
         ).toThrow(/group_by must be a non-empty string/);
     });
@@ -658,6 +662,7 @@ describe("parseTrigger", () => {
                 { paths: ["a"], group_by: 5, commands: [{ run: "echo" }] },
                 0,
                 1,
+                [2],
             ),
         ).toThrow(/group_by must be a non-empty string/);
     });
@@ -667,44 +672,57 @@ describe("parseTrigger", () => {
             { paths: ["a"], group_by: "packages/*", commands: [{ run: "echo" }] },
             0,
             1,
+            [2],
         );
         expect(trigger.group_by).toBe("packages/*");
     });
 
     test("rejects when commands is missing", () => {
-        expect(() => parseTrigger({ paths: ["a"] }, 0, 1)).toThrow(/commands is required/);
+        expect(() => parseTrigger({ paths: ["a"] }, 0, 1, [])).toThrow(/commands is required/);
     });
 
     test("rejects when commands is not an array", () => {
         expect(() =>
-            parseTrigger({ paths: ["a"], commands: "echo" }, 0, 1),
+            parseTrigger({ paths: ["a"], commands: "echo" }, 0, 1, []),
         ).toThrow(/commands must be a YAML sequence/);
     });
 
     test("rejects when commands is empty", () => {
-        expect(() => parseTrigger({ paths: ["a"], commands: [] }, 0, 1)).toThrow(
+        expect(() => parseTrigger({ paths: ["a"], commands: [] }, 0, 1, [])).toThrow(
             /commands must contain at least one entry/,
         );
     });
 
     test("includes the trigger index in error messages", () => {
-        expect(() => parseTrigger({ paths: ["a"] }, 7, 1)).toThrow(/trigger at index 7/);
+        expect(() => parseTrigger({ paths: ["a"] }, 7, 1, [])).toThrow(/trigger at index 7/);
     });
 
     test("propagates the supplied sourceLine to the result", () => {
-        const trigger: Trigger = parseTrigger({ commands: [{ run: "echo" }] }, 0, 99);
+        const trigger: Trigger = parseTrigger({ commands: [{ run: "echo" }] }, 0, 99, [100]);
         expect(trigger.sourceLine).toBe(99);
+    });
+
+    test("falls back to the trigger sourceLine when commandSourceLines is short", () => {
+        const trigger: Trigger = parseTrigger(
+            { commands: [{ run: "a" }, { run: "b" }] },
+            0,
+            10,
+            [],
+        );
+        expect(trigger.commands[0].sourceLine).toBe(10);
+        expect(trigger.commands[1].sourceLine).toBe(10);
     });
 });
 
 describe("parseCommand", () => {
     test("fills all three defaults when only run is given", () => {
-        const command: CommandConfig = parseCommand({ run: "echo" }, 0, 0);
+        const command: CommandConfig = parseCommand({ run: "echo" }, 0, 0, 7);
         expect(command).toEqual({
             run: "echo",
             cwd: "${{project}}",
             cooldown: 60,
             timeout: 300,
+            sourceLine: 7,
         });
     });
 
@@ -713,6 +731,7 @@ describe("parseCommand", () => {
             { run: "echo", cwd: "/tmp/somewhere" },
             0,
             0,
+            1,
         );
         expect(command.cwd).toBe("/tmp/somewhere");
     });
@@ -722,50 +741,56 @@ describe("parseCommand", () => {
             { run: "echo", cooldown: "30s", timeout: "5m" },
             0,
             0,
+            1,
         );
         expect(command.cooldown).toBe(30);
         expect(command.timeout).toBe(300);
     });
 
     test("rejects when the command is null", () => {
-        expect(() => parseCommand(null, 0, 0)).toThrow(/must be a YAML mapping/);
+        expect(() => parseCommand(null, 0, 0, 1)).toThrow(/must be a YAML mapping/);
     });
 
     test("rejects when the command is an array", () => {
-        expect(() => parseCommand([], 0, 0)).toThrow(/must be a YAML mapping/);
+        expect(() => parseCommand([], 0, 0, 1)).toThrow(/must be a YAML mapping/);
     });
 
     test("rejects when run is missing", () => {
-        expect(() => parseCommand({}, 1, 2)).toThrow(/run must be a non-empty string/);
+        expect(() => parseCommand({}, 1, 2, 1)).toThrow(/run must be a non-empty string/);
     });
 
     test("rejects when run is empty", () => {
-        expect(() => parseCommand({ run: "" }, 1, 2)).toThrow(/run must be a non-empty string/);
+        expect(() => parseCommand({ run: "" }, 1, 2, 1)).toThrow(/run must be a non-empty string/);
     });
 
     test("rejects when run is not a string", () => {
-        expect(() => parseCommand({ run: 5 }, 1, 2)).toThrow(/run must be a non-empty string/);
+        expect(() => parseCommand({ run: 5 }, 1, 2, 1)).toThrow(/run must be a non-empty string/);
     });
 
     test("rejects when cwd is not a string", () => {
         expect(() =>
-            parseCommand({ run: "echo", cwd: 5 }, 0, 0),
+            parseCommand({ run: "echo", cwd: 5 }, 0, 0, 1),
         ).toThrow(/cwd must be a string/);
     });
 
     test("rejects when cooldown is a YAML number", () => {
         expect(() =>
-            parseCommand({ run: "echo", cooldown: 30 }, 0, 0),
+            parseCommand({ run: "echo", cooldown: 30 }, 0, 0, 1),
         ).toThrow(/cooldown/);
     });
 
     test("rejects when timeout is a malformed duration string", () => {
         expect(() =>
-            parseCommand({ run: "echo", timeout: "1.5s" }, 0, 0),
+            parseCommand({ run: "echo", timeout: "1.5s" }, 0, 0, 1),
         ).toThrow(/timeout/);
     });
 
     test("includes both trigger and command indices in error messages", () => {
-        expect(() => parseCommand({ run: "" }, 3, 5)).toThrow(/trigger 3 command 5/);
+        expect(() => parseCommand({ run: "" }, 3, 5, 1)).toThrow(/trigger 3 command 5/);
+    });
+
+    test("propagates the supplied sourceLine to the result", () => {
+        const command: CommandConfig = parseCommand({ run: "echo" }, 0, 0, 42);
+        expect(command.sourceLine).toBe(42);
     });
 });

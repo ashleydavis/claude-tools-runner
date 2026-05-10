@@ -23,6 +23,7 @@ function makeTrigger(paths: string[] | undefined, runCommands: string[], sourceL
             run: runValue,
             cooldown: 60,
             timeout: 300,
+            sourceLine,
         };
         if (cwd !== undefined) {
             command.cwd = cwd;
@@ -493,6 +494,7 @@ describe("buildCompiledCommand", () => {
         cooldown: 60,
         timeout: 300,
         cwd: "${{project}}",
+        sourceLine: 5,
     };
 
     test("populates every field on the returned CompiledCommand", () => {

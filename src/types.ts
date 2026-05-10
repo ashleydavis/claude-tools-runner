@@ -26,6 +26,8 @@ export interface CommandConfig {
     cwd?: string;
     // Maximum runtime in seconds before the command is killed. Defaults to 300 (i.e. "5m") when not specified in YAML.
     timeout?: number;
+    // 1-based line number of this command's mapping inside its source YAML file. Set by `loadConfigFile` and propagated through `CompiledCommand` so log entries can reference the exact `run:` location of the command.
+    sourceLine: number;
 }
 
 // Persistent state stored on disk between hook invocations. Tracks file content hashes and per-command run metadata.
@@ -98,6 +100,8 @@ export interface CompiledCommand {
     triggerIndexInFile: number;
     // 0-based index of the command within its trigger. Used for stable log line identifiers.
     commandIndex: number;
+    // 1-based line number of this command's mapping inside its source YAML file. Copied from `CommandConfig.sourceLine`. Used to render editor-jump prefixes that point straight at the command's `run:` line.
+    commandSourceLine: number;
     // The original command declaration this emission came from. Carries `cooldown`, `timeout`, and the unexpanded `run`/`cwd` strings.
     command: CommandConfig;
     // The fully template-expanded working directory for this emission.

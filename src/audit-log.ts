@@ -309,100 +309,66 @@ export function resolveCommandLogDir(baseDir: string, now: Date): string {
     return path.join(baseDir, `${yearPart}-${monthPart}`, dayPart, hourPart);
 }
 
-// Renders `entry` as a single human-readable line for the `.log` companion of the JSON audit log. The format
-// is `HH:MM:SS  LABEL    <details>`; labels are left-padded to 9 characters so columns align across rows.
-// `<sourceFile>:<sourceLine>` prefixes are formatted like editor-jump locations so most terminals will let
-// users click straight to the offending YAML trigger.
-export function formatTextEntry(entry: IAuditLogEntry): string {
-    const timeOnly = entry.timestamp.length >= 19 ? entry.timestamp.slice(11, 19) : entry.timestamp;
-    const label = labelFor(entry.type).padEnd(9);
+// Renders `entry` as a single human-readable line for the `.log` companion of the JSON audit log. Returns
+// `null` for entry variants that exist only in the JSON log (`hook_started`, `config_load`, `changed_files`,
+// `trigger_match`, `command_started`, `state_saved`, `hook_completed`); callers must skip the text append in
+// that case. The format is `HH:MM:SS  LABEL  <details>`; labels are short outcome words so a reader does
+// not need to learn internal stage names. `<sourceFile>:<sourceLine>` prefixes are formatted like
+// editor-jump locations and point at the command's `run:` line for command-level entries.
+export function formatTextEntry(entry: IAuditLogEntry): string | null {
     const body = renderEntryBody(entry);
+    if (body === null) {
+        return null;
+    }
+    const timeOnly = entry.timestamp.length >= 19 ? entry.timestamp.slice(11, 19) : entry.timestamp;
+    const label = labelFor(entry).padEnd(8);
     return `${timeOnly}  ${label}${body}`;
 }
 
-// Returns the column label for `entryType`. The labels are short uppercase tags so the human-readable log
-// is grep-friendly (`grep RESULT log` for command outcomes, etc.).
-export function labelFor(entryType: string): string {
-    if (entryType === "hook_started") {
-        return "HOOK";
-    }
-    if (entryType === "config_load") {
-        return "CONFIG";
-    }
-    if (entryType === "changed_files") {
-        return "CHANGED";
-    }
-    if (entryType === "trigger_match") {
-        return "MATCH";
-    }
-    if (entryType === "gate_decision") {
-        return "GATE";
-    }
-    if (entryType === "command_started") {
-        return "START";
-    }
-    if (entryType === "command_result") {
-        return "RESULT";
-    }
-    if (entryType === "state_saved") {
-        return "STATE";
-    }
-    if (entryType === "hook_completed") {
-        return "DONE";
-    }
-    if (entryType === "hook_error") {
-        return "ERROR";
-    }
-    return entryType.toUpperCase();
-}
-
-// Maximum number of characters of the changed-files comma-list to inline in the human-readable text log.
-// Longer lists are truncated with an ellipsis; the JSON log always carries the full list, so truncation in
-// the text rendering only affects readability, not auditability.
-const CHANGED_FILES_TEXT_BUDGET: number = 200;
-
-// Routes `entry` to its variant-specific renderer. Kept separate from `formatTextEntry` so the discriminator
-// switch is visible in one place and adding a new variant fails compilation here when the case is missing.
-export function renderEntryBody(entry: IAuditLogEntry): string {
-    if (entry.type === "hook_started") {
-        return `started cwd=${entry.cwd} stop_hook_active=${entry.stopHookActive}`;
-    }
-    if (entry.type === "config_load") {
-        return `${entry.filePath} (${entry.triggerCount} triggers); state=${entry.hashesPath}, runs=${entry.runsDir}, log=${entry.logBaseDir}`;
-    }
-    if (entry.type === "changed_files") {
-        const fullList = entry.files.map(file => file.path).join(", ");
-        const inlineList = fullList.length > CHANGED_FILES_TEXT_BUDGET
-            ? fullList.slice(0, CHANGED_FILES_TEXT_BUDGET) + "..."
-            : fullList;
-        return `${entry.count} file(s): ${inlineList}`;
-    }
-    if (entry.type === "trigger_match") {
-        const total = entry.matchedFiles.length + entry.unmatchedFiles.length;
-        const patternList = entry.patterns.join(",");
-        return `${entry.sourceFile}:${entry.sourceLine} patterns=${patternList} matched=${entry.matchedFiles.length}/${total}`;
-    }
+// Returns the column label for `entry`. The labels describe what happened (RUN, SKIP, PASS, FAIL, TIMEOUT,
+// ERROR) rather than which internal stage emitted the entry, so a reader can interpret the log without
+// learning the codebase's vocabulary. Returns the entry's raw type uppercased for variants that do not
+// surface in the text log; those callers should never reach this function because `formatTextEntry`
+// short-circuits on them.
+export function labelFor(entry: IAuditLogEntry): string {
     if (entry.type === "gate_decision") {
-        return `${entry.sourceFile}:${entry.sourceLine} cmd=${entry.commandIndex} ${entry.decision.toUpperCase()}: ${entry.reason}`;
-    }
-    if (entry.type === "command_started") {
-        const pidPart = entry.pid !== null ? String(entry.pid) : "null";
-        return `${entry.sourceFile}:${entry.sourceLine} cmd=${entry.commandIndex} pid=${pidPart} timeout=${entry.timeoutSeconds}s "${entry.expandedRun}"`;
+        return entry.decision === "run" ? "RUN" : "SKIP";
     }
     if (entry.type === "command_result") {
-        return `${entry.sourceFile}:${entry.sourceLine} cmd=${entry.commandIndex} ${entry.outcome} exit=${entry.exitCode} ${entry.durationMs}ms`;
+        if (entry.outcome === "pass") {
+            return "PASS";
+        }
+        if (entry.outcome === "fail") {
+            return "FAIL";
+        }
+        return "TIMEOUT";
     }
-    if (entry.type === "state_saved") {
-        return `${entry.sourceFile}: ${entry.hashesPath} + ${entry.runsDir} (${entry.commandRunsCount} runs, ${entry.fileHashesCount} hashes; pruned ${entry.prunedCommandRuns}+${entry.prunedFileHashes})`;
+    if (entry.type === "hook_error") {
+        return "ERROR";
     }
-    if (entry.type === "hook_completed") {
-        const skipPart = entry.skipReason !== undefined ? ` skip=${entry.skipReason}` : "";
-        return `${entry.pass}P / ${entry.fail}F / ${entry.skip}S in ${entry.durationMs}ms exit=${entry.exitCode}${skipPart}`;
+    return entry.type.toUpperCase();
+}
+
+// Routes `entry` to its variant-specific text renderer. Returns `null` for entries that exist only in the
+// JSON log; the human-readable log keeps just the per-command outcomes (`gate_decision`, `command_result`)
+// and `hook_error`. Layer- and hook-level bookkeeping (`hook_started`, `config_load`, `changed_files`,
+// `trigger_match`, `command_started`, `state_saved`, `hook_completed`) is dropped from the text log
+// because every surviving line already carries a timestamp and a `<file>:<commandLine>` location, and the
+// dropped variants either repeat that information or describe internal plumbing the reader does not need.
+export function renderEntryBody(entry: IAuditLogEntry): string | null {
+    if (entry.type === "gate_decision") {
+        return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}" ${entry.reason}`;
+    }
+    if (entry.type === "command_result") {
+        if (entry.outcome === "pass") {
+            return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}" ${entry.durationMs}ms`;
+        }
+        return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}" exit=${entry.exitCode} ${entry.durationMs}ms`;
     }
     if (entry.type === "hook_error") {
         return entry.message;
     }
-    return JSON.stringify(entry);
+    return null;
 }
 
 // Persists audit-log entries to `<baseDir>/YYYY-MM/DD/HH.{json,log}`. The single `now` Date passed at
@@ -421,14 +387,19 @@ export class FileAuditLogger implements IAuditLogger {
         this.now = now;
     }
 
-    // Appends `entry` to both the JSON and text log files for the construction-time hour. Creates the parent
-    // directory recursively on first call so callers do not have to coordinate setup.
+    // Appends `entry` to the JSON log for the construction-time hour, and to the text log when
+    // `formatTextEntry` returns a non-null line. JSON keeps every variant; the text log carries only the
+    // per-command outcomes and hook errors (see `renderEntryBody`). Creates the parent directory
+    // recursively on first call so callers do not have to coordinate setup.
     async log(entry: IAuditLogEntry): Promise<void> {
         const jsonPath = resolveJsonLogPath(this.baseDir, this.now);
         const textPath = resolveTextLogPath(this.baseDir, this.now);
         await fs.mkdir(path.dirname(jsonPath), { recursive: true });
         await fs.appendFile(jsonPath, JSON.stringify(entry) + "\n");
-        await fs.appendFile(textPath, formatTextEntry(entry) + "\n");
+        const textLine = formatTextEntry(entry);
+        if (textLine !== null) {
+            await fs.appendFile(textPath, textLine + "\n");
+        }
     }
 }
 

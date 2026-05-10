@@ -42,12 +42,14 @@ function makePrepared(matchedFiles: ChangedFile[], expandedRun: string, expanded
         cooldown: cooldownSeconds,
         timeout: 300,
         cwd: expandedCwd,
+        sourceLine: 1,
     };
     return {
         sourceFile: "test-source.yaml",
         sourceLine: 1,
         triggerIndexInFile: 0,
         commandIndex: 0,
+        commandSourceLine: 1,
         command,
         expandedCwd,
         expandedRun,

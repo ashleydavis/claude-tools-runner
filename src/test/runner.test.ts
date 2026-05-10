@@ -145,12 +145,14 @@ function makeCompiled(matchedFiles: ChangedFile[], expandedRun: string, expanded
         cooldown: cooldownSeconds,
         timeout: timeoutSeconds,
         cwd: expandedCwd,
+        sourceLine: 8,
     };
     return {
         sourceFile: "test.yaml",
         sourceLine: 7,
         triggerIndexInFile: 0,
         commandIndex: 0,
+        commandSourceLine: 8,
         command,
         expandedRun,
         expandedCwd,
@@ -707,13 +709,13 @@ describe("runCommands audit-log emissions", () => {
         expect(startEntries).toHaveLength(2);
         expect(resultEntries).toHaveLength(2);
         for (const entry of gateEntries) {
-            expect((entry as { sourceLine: number }).sourceLine).toBe(7);
+            expect((entry as { sourceLine: number }).sourceLine).toBe(8);
         }
         for (const entry of startEntries) {
-            expect((entry as { sourceLine: number }).sourceLine).toBe(7);
+            expect((entry as { sourceLine: number }).sourceLine).toBe(8);
         }
         for (const entry of resultEntries) {
-            expect((entry as { sourceLine: number }).sourceLine).toBe(7);
+            expect((entry as { sourceLine: number }).sourceLine).toBe(8);
             expect((entry as { outcome: string }).outcome).toBe("pass");
         }
     });
@@ -804,12 +806,13 @@ describe("runOneCommand", () => {
         await fs.mkdir(path.dirname(absPath), { recursive: true });
         await fs.writeFile(absPath, "alpha", "utf8");
         const matchedFile: ChangedFile = { path: "src/a.ts", absPath };
-        const command: CommandConfig = { run: "echo direct", cooldown: 0, timeout: 30, cwd: path.join(oneTempDir, "work") };
+        const command: CommandConfig = { run: "echo direct", cooldown: 0, timeout: 30, cwd: path.join(oneTempDir, "work"), sourceLine: 12 };
         const compiled: CompiledCommand = {
             sourceFile: "test.yaml",
             sourceLine: 11,
             triggerIndexInFile: 0,
             commandIndex: 0,
+            commandSourceLine: 12,
             command,
             expandedRun: "echo direct",
             expandedCwd: path.join(oneTempDir, "work"),

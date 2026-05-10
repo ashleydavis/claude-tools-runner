@@ -8,5 +8,6 @@ plugin/dist/
 .claude/tools-runner-log/
 .claude/tools-runner-runs/
 tmp/
+e2e/**/tmp/
 .claude/permissions-debug.log
 .claude/permissions-log/

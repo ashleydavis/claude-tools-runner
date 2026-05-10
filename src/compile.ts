@@ -43,6 +43,7 @@ export function buildCompiledCommand(sourceFile: string, sourceLine: number, tri
         sourceLine,
         triggerIndexInFile,
         commandIndex,
+        commandSourceLine: command.sourceLine,
         command,
         expandedCwd,
         expandedRun,

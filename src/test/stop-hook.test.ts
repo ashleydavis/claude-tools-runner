@@ -688,16 +688,16 @@ describe("runStopHook", () => {
 
         const projectGateEntries = entries.filter(entry => entry.type === "gate_decision" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
         expect(projectGateEntries).toHaveLength(1);
-        expect(projectGateEntries[0].sourceLine).toBe(2);
+        expect(projectGateEntries[0].sourceLine).toBe(5);
         expect(projectGateEntries[0].decision).toBe("run");
 
         const projectStartEntries = entries.filter(entry => entry.type === "command_started" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
         expect(projectStartEntries).toHaveLength(1);
-        expect(projectStartEntries[0].sourceLine).toBe(2);
+        expect(projectStartEntries[0].sourceLine).toBe(5);
 
         const projectResultEntries = entries.filter(entry => entry.type === "command_result" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
         expect(projectResultEntries).toHaveLength(1);
-        expect(projectResultEntries[0].sourceLine).toBe(2);
+        expect(projectResultEntries[0].sourceLine).toBe(5);
         expect(projectResultEntries[0].outcome).toBe("pass");
     });
 

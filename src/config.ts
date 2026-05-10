@@ -73,15 +73,66 @@ export async function loadConfigFile(filePath: string): Promise<Config | null> {
     }
 
     const triggerSourceLines = computeTriggerSourceLines(rootMap, fileText, plainData.triggers.length);
+    const commandSourceLinesByTrigger = computeCommandSourceLinesByTrigger(rootMap, fileText, plainData.triggers);
 
     const triggers: Trigger[] = [];
     for (let triggerIndex = 0; triggerIndex < plainData.triggers.length; triggerIndex++) {
         const rawTrigger = plainData.triggers[triggerIndex];
         const sourceLine = triggerSourceLines[triggerIndex];
-        const parsedTrigger = parseTrigger(rawTrigger, triggerIndex, sourceLine);
+        const commandSourceLines = commandSourceLinesByTrigger[triggerIndex];
+        const parsedTrigger = parseTrigger(rawTrigger, triggerIndex, sourceLine, commandSourceLines);
         triggers.push(parsedTrigger);
     }
     return { triggers };
+}
+
+// Walks the YAML node tree and returns, for each trigger by index, an array of 1-based line numbers
+// (one per command mapping under its `commands:` key). Triggers whose `commands` cannot be resolved as a
+// YAML sequence get an empty array; individual commands without a resolvable position fall back to the
+// trigger's first line. The shape mirrors the JS-side `triggers[].commands[]` so callers can index by both.
+export function computeCommandSourceLinesByTrigger(rootMap: YAMLMap, sourceText: string, plainTriggers: any[]): number[][] {
+    const result: number[][] = [];
+    let triggersValueNode: any = null;
+    for (const pair of rootMap.items) {
+        const pairKey: any = pair.key;
+        if (isScalar(pairKey) && pairKey.value === "triggers") {
+            triggersValueNode = pair.value;
+            break;
+        }
+    }
+
+    if (!isSeq(triggersValueNode)) {
+        for (let triggerIndex = 0; triggerIndex < plainTriggers.length; triggerIndex++) {
+            result.push([]);
+        }
+        return result;
+    }
+
+    const triggersSeq = triggersValueNode;
+    for (let triggerIndex = 0; triggerIndex < plainTriggers.length; triggerIndex++) {
+        const triggerItemNode: any = triggersSeq.items[triggerIndex];
+        const commandLines: number[] = [];
+        if (triggerItemNode && isMap(triggerItemNode)) {
+            let commandsValueNode: any = null;
+            for (const pair of triggerItemNode.items) {
+                const pairKey: any = pair.key;
+                if (isScalar(pairKey) && pairKey.value === "commands") {
+                    commandsValueNode = pair.value;
+                    break;
+                }
+            }
+            if (isSeq(commandsValueNode)) {
+                const expectedCount = Array.isArray(plainTriggers[triggerIndex]?.commands) ? plainTriggers[triggerIndex].commands.length : 0;
+                for (let commandIndex = 0; commandIndex < expectedCount; commandIndex++) {
+                    const commandItemNode: any = commandsValueNode.items[commandIndex];
+                    const commandLine = lineNumberOfNode(commandItemNode, sourceText);
+                    commandLines.push(commandLine);
+                }
+            }
+        }
+        result.push(commandLines);
+    }
+    return result;
 }
 
 // Recursively walks `projectDir` and returns absolute paths to every `.claude/claude-tools-runner.yaml` file found.
@@ -215,8 +266,10 @@ export function byteOffsetToLineNumber(sourceText: string, offset: number): numb
 }
 
 // Parses one raw trigger entry from the YAML-decoded JS data into a typed `Trigger` with defaults filled.
-// Throws a descriptive validation error when the trigger is structurally invalid.
-export function parseTrigger(rawTrigger: any, triggerIndex: number, sourceLine: number): Trigger {
+// `commandSourceLines` carries the 1-based YAML line of each command mapping under this trigger; when an
+// entry is missing the parser falls back to the trigger's own `sourceLine` so audit lines still point inside
+// the right block. Throws a descriptive validation error when the trigger is structurally invalid.
+export function parseTrigger(rawTrigger: any, triggerIndex: number, sourceLine: number, commandSourceLines: number[]): Trigger {
     if (!rawTrigger || typeof rawTrigger !== "object" || Array.isArray(rawTrigger)) {
         throw new Error(`trigger at index ${triggerIndex} must be a YAML mapping`);
     }
@@ -258,7 +311,8 @@ export function parseTrigger(rawTrigger: any, triggerIndex: number, sourceLine: 
     const parsedCommands: CommandConfig[] = [];
     for (let commandIndex = 0; commandIndex < rawTrigger.commands.length; commandIndex++) {
         const rawCommand = rawTrigger.commands[commandIndex];
-        const parsedCommand = parseCommand(rawCommand, triggerIndex, commandIndex);
+        const commandLine = commandSourceLines[commandIndex] ?? sourceLine;
+        const parsedCommand = parseCommand(rawCommand, triggerIndex, commandIndex, commandLine);
         parsedCommands.push(parsedCommand);
     }
 
@@ -277,8 +331,9 @@ export function parseTrigger(rawTrigger: any, triggerIndex: number, sourceLine: 
 
 // Parses one raw command entry within a trigger into a `CommandConfig` with defaults applied.
 // `cooldown` and `timeout` are converted from YAML duration strings (or omitted) into integer seconds via `parseDuration`.
-// Throws a descriptive validation error when the command is structurally invalid.
-export function parseCommand(rawCommand: any, triggerIndex: number, commandIndex: number): CommandConfig {
+// `sourceLine` is the 1-based YAML line of the command's mapping, used by audit-log entries to point at the
+// command's `run:` line. Throws a descriptive validation error when the command is structurally invalid.
+export function parseCommand(rawCommand: any, triggerIndex: number, commandIndex: number, sourceLine: number): CommandConfig {
     if (!rawCommand || typeof rawCommand !== "object" || Array.isArray(rawCommand)) {
         throw new Error(`trigger ${triggerIndex} command ${commandIndex} must be a YAML mapping`);
     }
@@ -320,5 +375,6 @@ export function parseCommand(rawCommand: any, triggerIndex: number, commandIndex
         cwd: parsedCwd,
         cooldown: parsedCooldown,
         timeout: parsedTimeout,
+        sourceLine,
     };
 }
