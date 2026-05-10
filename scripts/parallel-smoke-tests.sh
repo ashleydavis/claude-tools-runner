@@ -3,7 +3,7 @@
 # Concurrency smoke test for the Stop hook's per-project state files.
 #
 # Drives many copies of the bundled hook in parallel against one sandbox, then verifies that
-# `tools-runner-hashes.yaml` and every per-command file under `tools-runner-runs/` round-trip through
+# `claude-tools-runner/hashes.yaml` and every per-command file under `claude-tools-runner/runs/` round-trip through
 # `yaml.parse` and pass a basic shape validation. Uses the audit log (`hook_started` / `hook_completed`
 # timestamps) to confirm that at least one iteration actually had two or more hooks running at the same
 # time; if 5 minutes elapse without observing a parallel overlap the test fails (the assertion would be
@@ -39,7 +39,7 @@ trap 'rm -rf "$SANDBOX" "$FAKE_HOME"' EXIT
 
 git -C "$SANDBOX" init -q
 mkdir -p "$SANDBOX/.claude" "$SANDBOX/src"
-cat > "$SANDBOX/.claude/tools-runner.yaml" <<'YAML'
+cat > "$SANDBOX/.claude/claude-tools-runner.yaml" <<'YAML'
 triggers:
   - paths:
       - "src/**/*.ts"
@@ -95,7 +95,7 @@ const yamlMod = await import("yaml");
 const sandbox = process.env.SANDBOX;
 const errors = [];
 
-const hashesPath = path.join(sandbox, ".claude", "tools-runner-hashes.yaml");
+const hashesPath = path.join(sandbox, ".claude", "claude-tools-runner", "hashes.yaml");
 if (fs.existsSync(hashesPath)) {
     try {
         const text = fs.readFileSync(hashesPath, "utf8");
@@ -112,7 +112,7 @@ if (fs.existsSync(hashesPath)) {
     }
 }
 
-const runsDir = path.join(sandbox, ".claude", "tools-runner-runs");
+const runsDir = path.join(sandbox, ".claude", "claude-tools-runner", "runs");
 if (fs.existsSync(runsDir)) {
     for (const entry of fs.readdirSync(runsDir)) {
         if (entry.endsWith(".lock") || entry.endsWith(".tmp")) {
@@ -158,7 +158,7 @@ if (fs.existsSync(claudeDir)) {
     }
 }
 
-const logRoot = path.join(sandbox, ".claude", "tools-runner-log");
+const logRoot = path.join(sandbox, ".claude", "claude-tools-runner", "log");
 const auditFiles = [];
 if (fs.existsSync(logRoot)) {
     const stack = [logRoot];

@@ -54,7 +54,7 @@ function makeCommandRunEntry(overrides: Partial<CommandRunEntry>): CommandRunEnt
         commandKey: "abc",
         expandedRun: "echo hi",
         expandedCwd: "/tmp/myrepo",
-        sourceFile: "/tmp/myrepo/.claude/tools-runner.yaml",
+        sourceFile: "/tmp/myrepo/.claude/claude-tools-runner.yaml",
         sourceLine: 1,
         lastRunAt: "2026-05-09T00:00:00.000Z",
         lastFilesHash: "deadbeef",
@@ -83,23 +83,23 @@ function makeHashesFileYaml(fileHashes: Record<string, FileHashEntry>): string {
 }
 
 describe("hashesPath", () => {
-    test("joins projectDir with .claude/tools-runner-hashes.yaml", () => {
+    test("joins scopeDir with .claude/claude-tools-runner/hashes.yaml", () => {
         const result: string = hashesPath("/tmp/myrepo");
-        expect(result).toBe(path.join("/tmp/myrepo", ".claude", "tools-runner-hashes.yaml"));
+        expect(result).toBe(path.join("/tmp/myrepo", ".claude", "claude-tools-runner", "hashes.yaml"));
     });
 });
 
 describe("runsDir", () => {
-    test("joins projectDir with .claude/tools-runner-runs", () => {
+    test("joins scopeDir with .claude/claude-tools-runner/runs", () => {
         const result: string = runsDir("/tmp/myrepo");
-        expect(result).toBe(path.join("/tmp/myrepo", ".claude", "tools-runner-runs"));
+        expect(result).toBe(path.join("/tmp/myrepo", ".claude", "claude-tools-runner", "runs"));
     });
 });
 
 describe("commandRunPath", () => {
     test("joins runsDir with the commandKey suffix", () => {
         const result: string = commandRunPath("/tmp/myrepo", "deadbeef");
-        expect(result).toBe(path.join("/tmp/myrepo", ".claude", "tools-runner-runs", "deadbeef.yaml"));
+        expect(result).toBe(path.join("/tmp/myrepo", ".claude", "claude-tools-runner", "runs", "deadbeef.yaml"));
     });
 });
 
@@ -479,11 +479,12 @@ describe("saveState", () => {
 
         await saveState(tempArea.rootDir, state, { now: fixedNow });
 
-        const claudeDirEntries = await fs.readdir(path.join(tempArea.rootDir, ".claude"));
+        const claudeToolsRunnerDir = path.join(tempArea.rootDir, ".claude", "claude-tools-runner");
+        const claudeToolsRunnerEntries = await fs.readdir(claudeToolsRunnerDir);
         const runsDirEntries = await fs.readdir(runsDir(tempArea.rootDir));
         const allLeftovers = [
-            ...claudeDirEntries.map(name => path.join(".claude", name)),
-            ...runsDirEntries.map(name => path.join(".claude", "tools-runner-runs", name)),
+            ...claudeToolsRunnerEntries.map(name => path.join(".claude", "claude-tools-runner", name)),
+            ...runsDirEntries.map(name => path.join(".claude", "claude-tools-runner", "runs", name)),
         ];
         const tmpLeftovers = allLeftovers.filter(name => name.endsWith(".tmp"));
         expect(tmpLeftovers).toEqual([]);
@@ -574,7 +575,7 @@ describe("validateCommandRunEntry", () => {
             commandKey: "k1",
             expandedRun: "echo hi",
             expandedCwd: "/tmp/myrepo",
-            sourceFile: "/tmp/myrepo/.claude/tools-runner.yaml",
+            sourceFile: "/tmp/myrepo/.claude/claude-tools-runner.yaml",
             sourceLine: 1,
             lastRunAt: "2026-05-09T00:00:00.000Z",
             lastFilesHash: "deadbeef",

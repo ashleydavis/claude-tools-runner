@@ -1,12 +1,11 @@
-import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { HookSkipReason, IAuditLogger, NullAuditLogger, createLogger, toLocalISOString } from "./audit-log";
+import { FileAuditLogger, HookSkipReason, IAuditLogger, MultiLayerLogger, NullAuditLogger, createLogger, resolveLogBaseDir, toLocalISOString } from "./audit-log";
 import { HOME_DISPLAY_PATH, homeConfigPath, scanConfigFiles } from "./config";
 import { collectChangedFiles } from "./git";
 import { hashesPath, loadState, runsDir, SaveStateResult, saveState } from "./state";
-import { runCommands } from "./runner";
-import { FileLayer, TriggerRegistry } from "./trigger-registry";
-import { ChangedFile, CompiledCommand, StopHookInput } from "./types";
+import { runCommands, RunResult } from "./runner";
+import { FileLayer } from "./trigger-registry";
+import { ChangedFile, CompiledCommand, State, StopHookInput } from "./types";
 
 // Custom error subclass thrown by routine error paths inside the post-logger phase of `runStopHook`. The
 // outer `try/catch` recognises this class and writes only the audit-log entries (the canonical stderr line
@@ -20,6 +19,30 @@ export class HookHandledError extends Error {
             this.stack = stack;
         }
     }
+}
+
+// One discovered configuration source, plus the bookkeeping needed to drive it through the pipeline. Each
+// per-config YAML and the home YAML produces one `LayerSlot`. The slot is built up incrementally:
+// `displayPath`, `scopeDir`, and `logger` are populated up front (before YAML parse) so a parse error can
+// be emitted via the audit log; `layer` is populated only after `FileLayer.create` resolves.
+interface LayerSlot {
+    // Display path stamped onto every audit-log entry from this layer (e.g. `.claude/claude-tools-runner.yaml`).
+    displayPath: string;
+    // Directory the layer's configuration governs. State and logs live under `<scopeDir>/.claude/claude-tools-runner/`.
+    scopeDir: string;
+    // Absolute path of the YAML on disk. `null` for the home layer when `$HOME` is unset.
+    configPath: string | null;
+    // Audit logger rooted at this layer's `.claude/claude-tools-runner/log/` tree, or null when the layer
+    // has no on-disk presence (e.g. home layer when `$HOME` is unset). Loggers are created before YAML is
+    // parsed so config-load failures still flow through the audit log.
+    logger: IAuditLogger;
+    // True when this layer has its own state and per-layer audit log files on disk. False for layers that
+    // were instantiated only to keep ordering invariants.
+    hasFileBackedState: boolean;
+    // Populated after a successful `FileLayer.create`. Undefined while the layer is still being loaded
+    // (so a parse failure can be logged with the surrounding `try/catch` and the slot left in a half-loaded
+    // state without a stale layer reference).
+    layer?: FileLayer;
 }
 
 // Maximum number of bytes the Stop hook will accept on stdin before it destroys the stream and rejects the
@@ -47,12 +70,11 @@ export async function readStdin(): Promise<string> {
 }
 
 // Top-level Stop hook entry point. Reads stdin, applies the recursion guard, scans for config files, builds
-// the layered trigger registry, collects changed files per scope, gates each prepared command, runs them,
-// persists state, and prints a one-line summary. Every routine outcome maps to a literal log line in the
-// catalog (plan section "Log line catalog"); any unexpected error is surfaced by the top-level `try/catch`
-// in `main` as a single stderr line plus exit 1. Audit-log entries are emitted at every event boundary
-// (`hook_started`, `config_load`, `changed_files`, `trigger_match`, `gate_decision`, `command_started`,
-// `command_result`, `state_saved`, `hook_completed`, `hook_error`) once `CLAUDE_PROJECT_DIR` is known.
+// one trigger layer per discovered YAML (plus the home layer), and walks each layer through the
+// load → match → gate → run → save pipeline. State and per-layer audit logs live under each layer's
+// `<scopeDir>/.claude/claude-tools-runner/` tree so nested repos with their own config get isolated state.
+// Global hook events (`hook_started`, `changed_files`, `hook_completed`, `hook_error`) fan out to every
+// layer's audit log via `MultiLayerLogger`.
 export async function runStopHook(): Promise<void> {
     const startedAt = Date.now();
     const now = new Date();
@@ -114,7 +136,8 @@ export async function runStopHook(): Promise<void> {
         const earlyProjectDir = process.env["CLAUDE_PROJECT_DIR"];
         if (earlyProjectDir !== undefined && earlyProjectDir !== "") {
             try {
-                logger = await createLogger(earlyProjectDir, now);
+                const earlyLogger = await createLogger(earlyProjectDir, now);
+                logger = earlyLogger;
                 await logger.log({
                     type: "hook_started",
                     timestamp: toLocalISOString(now),
@@ -143,7 +166,67 @@ export async function runStopHook(): Promise<void> {
         return;
     }
 
-    logger = await createLogger(projectDir, now);
+    const homeDir = process.env["HOME"] ?? "";
+    let configFilePaths: string[];
+    try {
+        configFilePaths = await scanConfigFiles(projectDir);
+    }
+    catch (caughtErr) {
+        process.stderr.write(`[tools-runner] failed to scan for config files: ${(caughtErr as Error).message}\n`);
+        process.exit(1);
+        return;
+    }
+
+    // Reserve one `LayerSlot` for the home layer plus one per discovered config. Loggers are built first
+    // so a YAML parse error during `FileLayer.create` can still flow through `hook_error`. The home layer's
+    // logger is omitted when `$HOME` is unset because we have no anchor for its `.claude/claude-tools-runner/`.
+    const layers: LayerSlot[] = [];
+
+    let homeLogger: IAuditLogger;
+    let homeHasFileBackedState: boolean;
+    if (homeDir !== "") {
+        homeLogger = await createLogger(homeDir, now);
+        homeHasFileBackedState = true;
+    }
+    else {
+        homeLogger = new NullAuditLogger();
+        homeHasFileBackedState = false;
+    }
+    layers.push({
+        displayPath: HOME_DISPLAY_PATH,
+        scopeDir: homeDir,
+        configPath: homeConfigPath(),
+        logger: homeLogger,
+        hasFileBackedState: homeHasFileBackedState,
+    });
+
+    for (const configPath of configFilePaths) {
+        const scopeDir = path.dirname(path.dirname(configPath));
+        const displayPath = path.relative(projectDir, configPath);
+        const layerLogger = await createLogger(scopeDir, now);
+        layers.push({
+            displayPath,
+            scopeDir,
+            configPath,
+            logger: layerLogger,
+            hasFileBackedState: true,
+        });
+    }
+
+    const loggerMap: Map<string, IAuditLogger> = new Map();
+    for (const slot of layers) {
+        if (slot.hasFileBackedState) {
+            loggerMap.set(slot.displayPath, slot.logger);
+        }
+    }
+    if (loggerMap.size === 0) {
+        // No file-backed loggers (no $HOME and no project configs). Drop a single project-dir logger so
+        // global events still land somewhere users can find by inspection.
+        const fallbackLogger = await createLogger(projectDir, now);
+        loggerMap.set(projectDir, fallbackLogger);
+    }
+    logger = new MultiLayerLogger(loggerMap);
+
     await logger.log({
         type: "hook_started",
         timestamp: toLocalISOString(now),
@@ -155,82 +238,64 @@ export async function runStopHook(): Promise<void> {
     hookStartedLogged = true;
 
     try {
-        const configFilePaths = await scanConfigFiles(projectDir);
-
-        const homeDir = process.env["HOME"] ?? "";
-        let homeLayer: FileLayer;
-        try {
-            homeLayer = await FileLayer.create(
-                homeConfigPath(),
-                HOME_DISPLAY_PATH,
-                homeDir,
-                { projectDir: homeDir },
-            );
-        }
-        catch (caughtErr) {
-            const loadErr = caughtErr as Error;
-            const message = `[tools-runner] failed to load ${HOME_DISPLAY_PATH}: ${loadErr.message}`;
-            process.stderr.write(message + "\n");
-            throw new HookHandledError(message, loadErr.stack);
-        }
-        await logger.log({
-            type: "config_load",
-            timestamp: toLocalISOString(new Date()),
-            filePath: HOME_DISPLAY_PATH,
-            triggerCount: homeLayer.triggerCount(),
-        });
-
-        const configLayers: FileLayer[] = [];
-        const configScopeDirs: string[] = [];
-        const configDisplayPaths: string[] = [];
-        for (const configPath of configFilePaths) {
-            const scopeDir = path.dirname(path.dirname(configPath));
-            const displayPath = path.relative(projectDir, configPath);
-            let layer: FileLayer;
+        // Resolve each layer's `FileLayer` (parsing the YAML at the same time). Failures emit a stderr
+        // line and throw `HookHandledError`; the outer catch logs `hook_error` and the hook exits 1.
+        for (const slot of layers) {
             try {
-                layer = await FileLayer.create(
-                    configPath,
-                    displayPath,
-                    scopeDir,
-                    { projectDir: scopeDir },
+                slot.layer = await FileLayer.create(
+                    slot.configPath,
+                    slot.displayPath,
+                    slot.scopeDir,
+                    { projectDir: slot.scopeDir },
                 );
             }
             catch (caughtErr) {
                 const loadErr = caughtErr as Error;
-                const message = `[tools-runner] failed to load ${displayPath}: ${loadErr.message}`;
+                const message = `[tools-runner] failed to load ${slot.displayPath}: ${loadErr.message}`;
                 process.stderr.write(message + "\n");
                 throw new HookHandledError(message, loadErr.stack);
             }
+            const layerHashesPath = slot.hasFileBackedState ? hashesPath(slot.scopeDir) : "";
+            const layerRunsDir = slot.hasFileBackedState ? runsDir(slot.scopeDir) : "";
+            const layerLogBaseDir = slot.hasFileBackedState ? resolveLogBaseDir(slot.scopeDir) : "";
             await logger.log({
                 type: "config_load",
                 timestamp: toLocalISOString(new Date()),
-                filePath: displayPath,
-                triggerCount: layer.triggerCount(),
+                filePath: slot.displayPath,
+                triggerCount: slot.layer.triggerCount(),
+                hashesPath: layerHashesPath,
+                runsDir: layerRunsDir,
+                logBaseDir: layerLogBaseDir,
             });
-            configLayers.push(layer);
-            configScopeDirs.push(scopeDir);
-            configDisplayPaths.push(displayPath);
+            if (slot.hasFileBackedState) {
+                process.stdout.write(`[tools-runner] loaded ${slot.displayPath} (${slot.layer.triggerCount()} triggers); state=${layerHashesPath}, runs=${layerRunsDir}, log=${layerLogBaseDir}\n`);
+            }
+            else {
+                process.stdout.write(`[tools-runner] loaded ${slot.displayPath} (${slot.layer.triggerCount()} triggers)\n`);
+            }
         }
 
-        const registry = new TriggerRegistry([homeLayer, ...configLayers]);
-        if (registry.isEmpty()) {
+        const allEmpty = layers.every(slot => slot.layer !== undefined && slot.layer.isEmpty());
+        if (allEmpty) {
             process.stdout.write("[tools-runner] no triggers configured, skipping\n");
             await logCompleted(0, "no_triggers");
             return;
         }
 
-        const state = await loadState(projectDir);
-
-        // Collect per-scope changed files. `ChangedFile.path` is scope-relative, so each layer must receive
-        // only the changes that belong inside its own `scopeDir`; otherwise a sibling scope's `x.ts` (path
-        // `"x.ts"` relative to that scope) would be matched by a different scope's `**/*.ts` glob, breaking
-        // scope isolation. We feed each layer its own per-scope list and union the layers' compiled commands.
-        const perScopeChanged: ChangedFile[][] = [];
+        // Per-scope changed-file collection. Each layer needs files inside its own `scopeDir`, because
+        // `ChangedFile.path` is scope-relative; otherwise a sibling scope's globs would match unrelated
+        // files. The home layer (its scope is `$HOME`) gets the union of every project-scope change set so
+        // home triggers can still fire on any project file.
+        const perLayerChanged: Map<string, ChangedFile[]> = new Map();
+        const projectScopeChangedLists: ChangedFile[][] = [];
         let totalChanged = 0;
-        for (const scopeDir of configScopeDirs) {
+        for (const slot of layers) {
+            if (slot.displayPath === HOME_DISPLAY_PATH) {
+                continue;
+            }
             let scopeChanged: ChangedFile[];
             try {
-                scopeChanged = await collectChangedFiles(scopeDir);
+                scopeChanged = await collectChangedFiles(slot.scopeDir);
             }
             catch (caughtErr) {
                 const gitErr = caughtErr as NodeJS.ErrnoException;
@@ -241,18 +306,14 @@ export async function runStopHook(): Promise<void> {
                 }
                 throw caughtErr;
             }
-            perScopeChanged.push(scopeChanged);
+            perLayerChanged.set(slot.displayPath, scopeChanged);
+            projectScopeChangedLists.push(scopeChanged);
             totalChanged += scopeChanged.length;
         }
 
-        // The home layer has no project scope of its own; feed it the union of every scope's changes so
-        // home triggers can fire on any project file. Production home triggers either operate on
-        // `${{file_path}}` (absolute) or are absent, so the lack of a single anchored `scopeDir` for the
-        // union is fine. The same union seeds the `changed_files` audit entry: it is the deduped view of
-        // every changed file the hook saw across scopes.
         const homeChanged: ChangedFile[] = [];
         const seenHomeAbsPaths = new Set<string>();
-        for (const scopeChanged of perScopeChanged) {
+        for (const scopeChanged of projectScopeChangedLists) {
             for (const changedFile of scopeChanged) {
                 if (seenHomeAbsPaths.has(changedFile.absPath)) {
                     continue;
@@ -261,6 +322,7 @@ export async function runStopHook(): Promise<void> {
                 homeChanged.push(changedFile);
             }
         }
+        perLayerChanged.set(HOME_DISPLAY_PATH, homeChanged);
 
         const sortedChanged = homeChanged.slice().sort((leftFile, rightFile) => leftFile.path.localeCompare(rightFile.path));
         await logger.log({
@@ -276,21 +338,12 @@ export async function runStopHook(): Promise<void> {
             return;
         }
 
-        for (const matchInfo of homeLayer.evaluateMatches(homeChanged)) {
-            await logger.log({
-                type: "trigger_match",
-                timestamp: toLocalISOString(new Date()),
-                sourceFile: matchInfo.sourceFile,
-                sourceLine: matchInfo.sourceLine,
-                triggerIndex: matchInfo.triggerIndex,
-                patterns: matchInfo.patterns,
-                matchedFiles: matchInfo.matchedFiles.map(file => file.path),
-                unmatchedFiles: matchInfo.unmatchedFiles.map(file => file.path),
-            });
-        }
-        for (let layerIndex = 0; layerIndex < configLayers.length; layerIndex++) {
-            const layerMatches = configLayers[layerIndex].evaluateMatches(perScopeChanged[layerIndex]);
-            for (const matchInfo of layerMatches) {
+        for (const slot of layers) {
+            if (slot.layer === undefined) {
+                continue;
+            }
+            const layerChanged = perLayerChanged.get(slot.displayPath) ?? [];
+            for (const matchInfo of slot.layer.evaluateMatches(layerChanged)) {
                 await logger.log({
                     type: "trigger_match",
                     timestamp: toLocalISOString(new Date()),
@@ -304,59 +357,102 @@ export async function runStopHook(): Promise<void> {
             }
         }
 
-        const prepared: CompiledCommand[] = [];
-        for (const homeCompiled of homeLayer.compileCommands(homeChanged)) {
-            prepared.push(homeCompiled);
-        }
-        for (let layerIndex = 0; layerIndex < configLayers.length; layerIndex++) {
-            const layerCompiled = configLayers[layerIndex].compileCommands(perScopeChanged[layerIndex]);
-            for (const entry of layerCompiled) {
-                prepared.push(entry);
+        // Per-layer state load. Each layer keeps its own `hashes.yaml` and `runs/` tree under
+        // `<scopeDir>/.claude/claude-tools-runner/`, so nested repos cannot contaminate each other.
+        const stateByLayer: Map<string, State> = new Map();
+        for (const slot of layers) {
+            if (!slot.hasFileBackedState) {
+                continue;
             }
+            stateByLayer.set(slot.displayPath, await loadState(slot.scopeDir));
         }
-        if (prepared.length === 0) {
+
+        const preparedByLayer: Map<string, CompiledCommand[]> = new Map();
+        let totalPrepared = 0;
+        for (const slot of layers) {
+            if (slot.layer === undefined) {
+                preparedByLayer.set(slot.displayPath, []);
+                continue;
+            }
+            const layerChanged = perLayerChanged.get(slot.displayPath) ?? [];
+            const compiled = slot.layer.compileCommands(layerChanged);
+            preparedByLayer.set(slot.displayPath, compiled);
+            totalPrepared += compiled.length;
+        }
+        if (totalPrepared === 0) {
             process.stdout.write("[tools-runner] no triggers matched, skipping\n");
             await logCompleted(0, "no_match");
             return;
         }
 
-        const results = await runCommands(prepared, state, new Date(), {
-            logger,
-            logBaseDir: path.join(projectDir, ".claude", "tools-runner-log"),
-            projectDir,
-        });
-
-        await fs.mkdir(path.join(projectDir, ".claude"), { recursive: true });
-        let saveResult: SaveStateResult;
-        try {
-            saveResult = await saveState(projectDir, state);
-        }
-        catch (caughtErr) {
-            const saveErr = caughtErr as Error;
-            const message = `[tools-runner] cannot write state file: ${saveErr.message}`;
-            process.stderr.write(message + "\n");
-            throw new HookHandledError(message, saveErr.stack);
-        }
-        await logger.log({
-            type: "state_saved",
-            timestamp: toLocalISOString(new Date()),
-            hashesPath: hashesPath(projectDir),
-            runsDir: runsDir(projectDir),
-            commandRunsCount: state.commandRuns.length,
-            fileHashesCount: Object.keys(state.fileHashes).length,
-            prunedCommandRuns: saveResult.prunedCommandRuns,
-            prunedFileHashes: saveResult.prunedFileHashes,
-        });
-
-        for (const result of results) {
-            if (result.logFile === "") {
-                skipCount += 1;
+        // Run each layer's commands in parallel. `runCommands` itself fans out via Promise.all internally;
+        // the outer Promise.all here adds layer-level parallelism on top so independent layers do not block
+        // each other on slow commands.
+        const layerRunPromises: Promise<RunResult[]>[] = [];
+        for (const slot of layers) {
+            const compiled = preparedByLayer.get(slot.displayPath) ?? [];
+            if (compiled.length === 0) {
+                layerRunPromises.push(Promise.resolve([]));
+                continue;
             }
-            else if (result.exitCode === 0 && result.error === undefined) {
-                passCount += 1;
+            const layerState = stateByLayer.get(slot.displayPath);
+            if (layerState === undefined) {
+                // Layer has no file-backed state (e.g. home layer with $HOME unset): skip running its
+                // commands rather than risk losing state on every invocation.
+                layerRunPromises.push(Promise.resolve([]));
+                continue;
             }
-            else {
-                failCount += 1;
+            layerRunPromises.push(runCommands(compiled, layerState, new Date(), {
+                logger,
+                logBaseDir: resolveLogBaseDir(slot.scopeDir),
+                projectDir: slot.scopeDir,
+            }));
+        }
+        const resultsByLayer = await Promise.all(layerRunPromises);
+
+        // Save state per layer.
+        for (const slot of layers) {
+            if (!slot.hasFileBackedState) {
+                continue;
+            }
+            const layerState = stateByLayer.get(slot.displayPath);
+            if (layerState === undefined) {
+                continue;
+            }
+            let saveResult: SaveStateResult;
+            try {
+                saveResult = await saveState(slot.scopeDir, layerState);
+            }
+            catch (caughtErr) {
+                const saveErr = caughtErr as Error;
+                const message = `[tools-runner] cannot write state file: ${saveErr.message}`;
+                process.stderr.write(message + "\n");
+                throw new HookHandledError(message, saveErr.stack);
+            }
+            await logger.log({
+                type: "state_saved",
+                timestamp: toLocalISOString(new Date()),
+                sourceFile: slot.displayPath,
+                hashesPath: hashesPath(slot.scopeDir),
+                runsDir: runsDir(slot.scopeDir),
+                commandRunsCount: layerState.commandRuns.length,
+                fileHashesCount: Object.keys(layerState.fileHashes).length,
+                prunedCommandRuns: saveResult.prunedCommandRuns,
+                prunedFileHashes: saveResult.prunedFileHashes,
+            });
+        }
+
+        for (const layerResults of resultsByLayer) {
+            for (const result of layerResults) {
+                if (result.logFile === "") {
+                    skipCount += 1;
+                }
+                else if (result.exitCode === 0 && result.error === undefined) {
+                    passCount += 1;
+                }
+                else {
+                    failCount += 1;
+                }
             }
         }
         process.stdout.write(`[tools-runner] summary: ${passCount} pass, ${failCount} fail, ${skipCount} skip\n`);
@@ -395,3 +491,7 @@ export async function main(): Promise<void> {
 if (process.env["NODE_ENV"] !== "test") {
     main();
 }
+
+// Unused re-export silencer; keeps `FileAuditLogger` reachable from this module so callers that want the
+// file logger have a single import point.
+export type _StopHookFileAuditLoggerRef = FileAuditLogger;

@@ -23,7 +23,7 @@ To build and run from a local checkout instead of the marketplace, see [DEVELOPM
 
 ## Minimal example
 
-Drop this file at `<your-project>/.claude/tools-runner.yaml`:
+Drop this file at `<your-project>/.claude/claude-tools-runner.yaml`:
 
 ```yaml
 triggers:
@@ -39,6 +39,6 @@ Now whenever Claude finishes a turn that left changed `.ts` files under `src/` i
 
 ## Learn more
 
-- [Configuration](docs/CONFIGURATION.md): How to write your `tools-runner.yaml` configuration.
+- [Configuration](docs/CONFIGURATION.md): How to write your `claude-tools-runner.yaml` configuration.
 - [How it works](docs/HOW_IT_WORKS.md): How the plugin works under the hood.
 - [Development](docs/DEVELOPMENT.md): Instructions for cloning, building, and contributing to the plugin.

@@ -196,7 +196,7 @@ describe("FileLayer", () => {
             "      - run: \"echo a\"",
             "",
         ].join("\n");
-        const yamlPath = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const yamlPath = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(yamlPath, yamlText);
         const ctx: TemplateContext = { projectDir: tempArea.rootDir };
 
@@ -214,7 +214,7 @@ describe("FileLayer", () => {
     });
 
     test("FileLayer.create rejects when the YAML file fails to parse", async () => {
-        const yamlPath = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const yamlPath = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(yamlPath, "triggers:\n  - paths: [\n    : :\n");
         const ctx: TemplateContext = { projectDir: tempArea.rootDir };
         await expect(FileLayer.create(yamlPath, yamlPath, tempArea.rootDir, ctx)).rejects.toThrow();
@@ -228,7 +228,7 @@ describe("FileLayer", () => {
             "      - run: \"\"",
             "",
         ].join("\n");
-        const yamlPath = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const yamlPath = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(yamlPath, yamlText);
         const ctx: TemplateContext = { projectDir: tempArea.rootDir };
         await expect(FileLayer.create(yamlPath, yamlPath, tempArea.rootDir, ctx)).rejects.toThrow(/run must be a non-empty string/);
@@ -245,7 +245,7 @@ describe("FileLayer", () => {
             "      - run: \"echo b\"",
             "",
         ].join("\n");
-        const yamlPath = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const yamlPath = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(yamlPath, yamlText);
         const ctx: TemplateContext = { projectDir: tempArea.rootDir };
         const layer = await FileLayer.create(yamlPath, yamlPath, tempArea.rootDir, ctx);
@@ -269,17 +269,17 @@ describe("FileLayer", () => {
             "      - run: \"echo b\"",
             "",
         ].join("\n");
-        const yamlPath = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const yamlPath = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(yamlPath, yamlText);
         const ctx: TemplateContext = { projectDir: tempArea.rootDir };
-        const layer = await FileLayer.create(yamlPath, "tools-runner.yaml", tempArea.rootDir, ctx);
+        const layer = await FileLayer.create(yamlPath, "claude-tools-runner.yaml", tempArea.rootDir, ctx);
         const changed: ChangedFile[] = [
             makeChangedFile(tempArea.rootDir, "src/a.ts"),
             makeChangedFile(tempArea.rootDir, "docs/x.md"),
         ];
         const matches = layer.evaluateMatches(changed);
         expect(matches).toHaveLength(2);
-        expect(matches[0].sourceFile).toBe("tools-runner.yaml");
+        expect(matches[0].sourceFile).toBe("claude-tools-runner.yaml");
         expect(matches[0].sourceLine).toBe(2);
         expect(matches[0].triggerIndex).toBe(0);
         expect(matches[0].patterns).toEqual(["src/**/*.ts"]);

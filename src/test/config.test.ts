@@ -67,7 +67,7 @@ describe("loadConfigFile", () => {
             "      - run: \"bun run test\"",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
 
         const result: Config | null = await loadConfigFile(filePath);
@@ -98,7 +98,7 @@ describe("loadConfigFile", () => {
             "        timeout: \"30s\"",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
 
         const result: Config | null = await loadConfigFile(filePath);
@@ -109,13 +109,13 @@ describe("loadConfigFile", () => {
     });
 
     test("throws on unparseable yaml", async () => {
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, "triggers:\n  - paths: [\n    : :\n");
         await expect(loadConfigFile(filePath)).rejects.toThrow();
     });
 
     test("throws when triggers is not an array", async () => {
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, "triggers: \"not an array\"\n");
         await expect(loadConfigFile(filePath)).rejects.toThrow(/triggers must be/);
     });
@@ -128,7 +128,7 @@ describe("loadConfigFile", () => {
             "      - run: \"\"",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
         await expect(loadConfigFile(filePath)).rejects.toThrow(/run must be a non-empty string/);
     });
@@ -142,7 +142,7 @@ describe("loadConfigFile", () => {
             "        cooldown: 30",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
         await expect(loadConfigFile(filePath)).rejects.toThrow(/cooldown/);
     });
@@ -156,7 +156,7 @@ describe("loadConfigFile", () => {
             "        cooldown: \"1.5s\"",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
         await expect(loadConfigFile(filePath)).rejects.toThrow(/cooldown/);
     });
@@ -170,20 +170,20 @@ describe("loadConfigFile", () => {
             "        cooldown: \"500ms\"",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
         await expect(loadConfigFile(filePath)).rejects.toThrow(/cooldown/);
     });
 
     test("accepts an empty document and returns triggers: []", async () => {
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, "");
         const result: Config | null = await loadConfigFile(filePath);
         expect(result).toEqual({ triggers: [] });
     });
 
     test("accepts a document with triggers: []", async () => {
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, "triggers: []\n");
         const result: Config | null = await loadConfigFile(filePath);
         expect(result).toEqual({ triggers: [] });
@@ -196,7 +196,7 @@ describe("loadConfigFile", () => {
             "      - run: \"echo\"",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
         const result: Config | null = await loadConfigFile(filePath);
         expect(result!.triggers[0].paths).toBeUndefined();
@@ -211,7 +211,7 @@ describe("loadConfigFile", () => {
             "      - run: \"echo\"",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
         const result: Config | null = await loadConfigFile(filePath);
         expect(result!.triggers[0].paths).toEqual([]);
@@ -224,7 +224,7 @@ describe("loadConfigFile", () => {
             "  foo: 1",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
         await expect(loadConfigFile(filePath)).rejects.toThrow(/unknown top-level key/);
     });
@@ -238,7 +238,7 @@ describe("loadConfigFile", () => {
             "      - run: \"echo\"",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
         const result: Config | null = await loadConfigFile(filePath);
         expect(result!.triggers[0].group_by).toBe("packages/*");
@@ -253,7 +253,7 @@ describe("loadConfigFile", () => {
             "      - run: \"echo\"",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
         await expect(loadConfigFile(filePath)).rejects.toThrow(/group_by/);
     });
@@ -267,7 +267,7 @@ describe("loadConfigFile", () => {
             "      - run: \"echo\"",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
         await expect(loadConfigFile(filePath)).rejects.toThrow(/group_by/);
     });
@@ -295,7 +295,7 @@ describe("loadConfigFile", () => {
             /* 17 */ "      - run: echo",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
 
         const result: Config | null = await loadConfigFile(filePath);
@@ -314,7 +314,7 @@ describe("loadConfigFile", () => {
             /* 8 */ "      - run: echo",
             "",
         ].join("\n");
-        const filePath: string = path.join(tempArea.rootDir, "tools-runner.yaml");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(filePath, yamlText);
 
         const result: Config | null = await loadConfigFile(filePath);
@@ -345,13 +345,13 @@ describe("homeConfigPath", () => {
 
     test("returns the expected path when HOME is set", () => {
         process.env["HOME"] = "/tmp/fake-home";
-        expect(homeConfigPath()).toBe(path.join("/tmp/fake-home", ".claude", "tools-runner.yaml"));
+        expect(homeConfigPath()).toBe(path.join("/tmp/fake-home", ".claude", "claude-tools-runner.yaml"));
     });
 });
 
 describe("HOME_DISPLAY_PATH", () => {
     test("is the literal ~-prefixed path used in log output", () => {
-        expect(HOME_DISPLAY_PATH).toBe("~/.claude/tools-runner.yaml");
+        expect(HOME_DISPLAY_PATH).toBe("~/.claude/claude-tools-runner.yaml");
     });
 });
 
@@ -366,10 +366,10 @@ describe("scanConfigFiles", () => {
         await cleanupTempArea(tempArea);
     });
 
-    test("returns paths to all .claude/tools-runner.yaml files in the tree, sorted", async () => {
-        const topLevelConfig: string = path.join(tempArea.rootDir, ".claude", "tools-runner.yaml");
-        const nestedConfig: string = path.join(tempArea.rootDir, "packages", "alpha", ".claude", "tools-runner.yaml");
-        const deeperConfig: string = path.join(tempArea.rootDir, "services", "billing", "subdir", ".claude", "tools-runner.yaml");
+    test("returns paths to all .claude/claude-tools-runner.yaml files in the tree, sorted", async () => {
+        const topLevelConfig: string = path.join(tempArea.rootDir, ".claude", "claude-tools-runner.yaml");
+        const nestedConfig: string = path.join(tempArea.rootDir, "packages", "alpha", ".claude", "claude-tools-runner.yaml");
+        const deeperConfig: string = path.join(tempArea.rootDir, "services", "billing", "subdir", ".claude", "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(topLevelConfig, "triggers: []\n");
         await writeFileEnsuringDirs(nestedConfig, "triggers: []\n");
         await writeFileEnsuringDirs(deeperConfig, "triggers: []\n");
@@ -380,8 +380,8 @@ describe("scanConfigFiles", () => {
     });
 
     test("skips node_modules directories", async () => {
-        const realConfig: string = path.join(tempArea.rootDir, "src", ".claude", "tools-runner.yaml");
-        const ignoredConfig: string = path.join(tempArea.rootDir, "node_modules", "some-pkg", ".claude", "tools-runner.yaml");
+        const realConfig: string = path.join(tempArea.rootDir, "src", ".claude", "claude-tools-runner.yaml");
+        const ignoredConfig: string = path.join(tempArea.rootDir, "node_modules", "some-pkg", ".claude", "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(realConfig, "triggers: []\n");
         await writeFileEnsuringDirs(ignoredConfig, "triggers: []\n");
 
@@ -390,10 +390,10 @@ describe("scanConfigFiles", () => {
     });
 
     test("skips .git, .cache, and other dot-prefixed directories (other than .claude)", async () => {
-        const realConfig: string = path.join(tempArea.rootDir, "app", ".claude", "tools-runner.yaml");
-        const insideGit: string = path.join(tempArea.rootDir, ".git", "weird", ".claude", "tools-runner.yaml");
-        const insideCache: string = path.join(tempArea.rootDir, ".cache", ".claude", "tools-runner.yaml");
-        const insideOtherDot: string = path.join(tempArea.rootDir, ".vscode", ".claude", "tools-runner.yaml");
+        const realConfig: string = path.join(tempArea.rootDir, "app", ".claude", "claude-tools-runner.yaml");
+        const insideGit: string = path.join(tempArea.rootDir, ".git", "weird", ".claude", "claude-tools-runner.yaml");
+        const insideCache: string = path.join(tempArea.rootDir, ".cache", ".claude", "claude-tools-runner.yaml");
+        const insideOtherDot: string = path.join(tempArea.rootDir, ".vscode", ".claude", "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(realConfig, "triggers: []\n");
         await writeFileEnsuringDirs(insideGit, "triggers: []\n");
         await writeFileEnsuringDirs(insideCache, "triggers: []\n");
@@ -403,7 +403,7 @@ describe("scanConfigFiles", () => {
         expect(results).toEqual([realConfig]);
     });
 
-    test("returns an empty array when no .claude/tools-runner.yaml files exist", async () => {
+    test("returns an empty array when no .claude/claude-tools-runner.yaml files exist", async () => {
         await fs.mkdir(path.join(tempArea.rootDir, "src"), { recursive: true });
         const results: string[] = await scanConfigFiles(tempArea.rootDir);
         expect(results).toEqual([]);
@@ -556,9 +556,9 @@ describe("scanDirectoryRecursive", () => {
         await cleanupTempArea(tempArea);
     });
 
-    test("appends discovered .claude/tools-runner.yaml files into the supplied results array", async () => {
-        const firstConfig: string = path.join(tempArea.rootDir, ".claude", "tools-runner.yaml");
-        const secondConfig: string = path.join(tempArea.rootDir, "nested", ".claude", "tools-runner.yaml");
+    test("appends discovered .claude/claude-tools-runner.yaml files into the supplied results array", async () => {
+        const firstConfig: string = path.join(tempArea.rootDir, ".claude", "claude-tools-runner.yaml");
+        const secondConfig: string = path.join(tempArea.rootDir, "nested", ".claude", "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(firstConfig, "triggers: []\n");
         await writeFileEnsuringDirs(secondConfig, "triggers: []\n");
 
@@ -570,8 +570,8 @@ describe("scanDirectoryRecursive", () => {
 
     test("does not sort results (sorting is the responsibility of the caller)", async () => {
         // We cannot reliably assert order, but we can assert that the function preserves whatever order readdir produced.
-        const firstConfig: string = path.join(tempArea.rootDir, "alpha", ".claude", "tools-runner.yaml");
-        const secondConfig: string = path.join(tempArea.rootDir, "beta", ".claude", "tools-runner.yaml");
+        const firstConfig: string = path.join(tempArea.rootDir, "alpha", ".claude", "claude-tools-runner.yaml");
+        const secondConfig: string = path.join(tempArea.rootDir, "beta", ".claude", "claude-tools-runner.yaml");
         await writeFileEnsuringDirs(firstConfig, "triggers: []\n");
         await writeFileEnsuringDirs(secondConfig, "triggers: []\n");
 
@@ -583,8 +583,8 @@ describe("scanDirectoryRecursive", () => {
     });
 
     test("treats an existing `.claude` that is not a regular file as absent", async () => {
-        // Create a `.claude/tools-runner.yaml` that is itself a directory rather than a file.
-        const trapPath: string = path.join(tempArea.rootDir, ".claude", "tools-runner.yaml");
+        // Create a `.claude/claude-tools-runner.yaml` that is itself a directory rather than a file.
+        const trapPath: string = path.join(tempArea.rootDir, ".claude", "claude-tools-runner.yaml");
         await fs.mkdir(trapPath, { recursive: true });
 
         const collected: string[] = [];

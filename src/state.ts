@@ -34,22 +34,23 @@ export interface SaveStateResult {
     prunedFileHashes: number;
 }
 
-// Returns the absolute path of the per-project hash cache YAML for `projectDir`. The hash cache holds the
+// Returns the absolute path of the per-layer hash cache YAML for `scopeDir`. The hash cache holds the
 // deduped `FileHashEntry` map keyed by absolute file path. Per-command run records live in sibling files
-// under `runsDir(projectDir)`.
-export function hashesPath(projectDir: string): string {
-    return path.join(projectDir, ".claude", "tools-runner-hashes.yaml");
+// under `runsDir(scopeDir)`. `scopeDir` is the directory containing the `.claude/` directory of one
+// configuration file (or `$HOME` for the home layer).
+export function hashesPath(scopeDir: string): string {
+    return path.join(scopeDir, ".claude", "claude-tools-runner", "hashes.yaml");
 }
 
 // Returns the directory that holds one YAML file per `commandKey`. Each file carries a single
-// `CommandRunEntry`.
-export function runsDir(projectDir: string): string {
-    return path.join(projectDir, ".claude", "tools-runner-runs");
+// `CommandRunEntry`. Scoped to one configuration file's `.claude/claude-tools-runner/` tree.
+export function runsDir(scopeDir: string): string {
+    return path.join(scopeDir, ".claude", "claude-tools-runner", "runs");
 }
 
-// Returns the absolute path of the per-command run file for `commandKey` under `projectDir`.
-export function commandRunPath(projectDir: string, commandKey: string): string {
-    return path.join(runsDir(projectDir), `${commandKey}.yaml`);
+// Returns the absolute path of the per-command run file for `commandKey` under `scopeDir`.
+export function commandRunPath(scopeDir: string, commandKey: string): string {
+    return path.join(runsDir(scopeDir), `${commandKey}.yaml`);
 }
 
 // Computes the deterministic content-addressed key for one prepared command. Identifies the command by its
@@ -98,18 +99,19 @@ export function emptyState(): State {
     };
 }
 
-// Loads the on-disk state for `projectDir`. Reads the hash cache file plus every well-formed per-command
-// run file under `runsDir(projectDir)`. A missing hash cache, missing runs directory, or corrupt individual
+// Loads the on-disk state for `scopeDir`. Reads the hash cache file plus every well-formed per-command
+// run file under `runsDir(scopeDir)`. A missing hash cache, missing runs directory, or corrupt individual
 // files are tolerated (treated as empty / skipped) so a damaged state never blocks the Stop hook. Loaded
 // entries are marked `dirty = false` so `saveState` leaves their files alone unless the caller upserts.
-export async function loadState(projectDir: string): Promise<State> {
+// `scopeDir` is the directory containing the configuration file's `.claude/` directory.
+export async function loadState(scopeDir: string): Promise<State> {
     const state = emptyState();
 
-    state.fileHashes = await loadHashesFile(hashesPath(projectDir));
+    state.fileHashes = await loadHashesFile(hashesPath(scopeDir));
 
     let runFileNames: string[];
     try {
-        runFileNames = await fs.readdir(runsDir(projectDir));
+        runFileNames = await fs.readdir(runsDir(scopeDir));
     }
     catch (caughtErr) {
         const errnoErr = caughtErr as NodeJS.ErrnoException;
@@ -123,7 +125,7 @@ export async function loadState(projectDir: string): Promise<State> {
         if (!fileName.endsWith(".yaml")) {
             continue;
         }
-        const runFilePath = path.join(runsDir(projectDir), fileName);
+        const runFilePath = path.join(runsDir(scopeDir), fileName);
         const entry = await loadCommandRunFile(runFilePath);
         if (entry === undefined) {
             continue;
@@ -134,13 +136,13 @@ export async function loadState(projectDir: string): Promise<State> {
     return state;
 }
 
-// Persists `state` to `projectDir`. Each dirty per-command file is rewritten under its own `withFileLock`
+// Persists `state` to `scopeDir`. Each dirty per-command file is rewritten under its own `withFileLock`
 // (last-rename-wins on contention; the lock just serializes writers so they do not collide on the
 // intermediate tmp file). The TTL prune scans `runsDir` and unlinks files whose `lastRunAt` is older than
 // `ttlDays`. The hash cache is rewritten under its own lock; the orphan prune drops `fileHashes` entries
 // that no surviving run references. Returns the prune cardinalities so the caller can emit a
 // `state_saved` audit entry.
-export async function saveState(projectDir: string, state: State, opts?: SaveStateOptions): Promise<SaveStateResult> {
+export async function saveState(scopeDir: string, state: State, opts?: SaveStateOptions): Promise<SaveStateResult> {
     const now = opts?.now !== undefined ? opts.now : new Date();
     const ttlDays = opts?.ttlDays !== undefined ? opts.ttlDays : DEFAULT_TTL_DAYS;
     const ttlMillis = ttlDays * MS_PER_DAY;
@@ -150,18 +152,18 @@ export async function saveState(projectDir: string, state: State, opts?: SaveSta
         lockOpts.staleLockMs = opts.staleLockMs;
     }
 
-    await fs.mkdir(runsDir(projectDir), { recursive: true });
+    await fs.mkdir(runsDir(scopeDir), { recursive: true });
 
     for (const entry of state.commandRuns) {
         if (entry.dirty === false) {
             continue;
         }
-        await writeCommandRunFile(projectDir, entry, lockOpts);
+        await writeCommandRunFile(scopeDir, entry, lockOpts);
     }
 
     let runFileNames: string[];
     try {
-        runFileNames = await fs.readdir(runsDir(projectDir));
+        runFileNames = await fs.readdir(runsDir(scopeDir));
     }
     catch (caughtErr) {
         const errnoErr = caughtErr as NodeJS.ErrnoException;
@@ -180,7 +182,7 @@ export async function saveState(projectDir: string, state: State, opts?: SaveSta
         if (!fileName.endsWith(".yaml")) {
             continue;
         }
-        const runFilePath = path.join(runsDir(projectDir), fileName);
+        const runFilePath = path.join(runsDir(scopeDir), fileName);
         const entry = await loadCommandRunFile(runFilePath);
         if (entry === undefined) {
             continue;
@@ -221,7 +223,7 @@ export async function saveState(projectDir: string, state: State, opts?: SaveSta
     state.commandRuns = survivingRuns;
 
     let prunedFileHashes = 0;
-    await withFileLock(hashesPath(projectDir) + ".lock", async () => {
+    await withFileLock(hashesPath(scopeDir) + ".lock", async () => {
         const fileHashesBefore = Object.keys(state.fileHashes).length;
         const survivingHashes: Record<string, FileHashEntry> = {};
         for (const fileHashKey of Object.keys(state.fileHashes)) {
@@ -230,7 +232,7 @@ export async function saveState(projectDir: string, state: State, opts?: SaveSta
             }
         }
         prunedFileHashes = fileHashesBefore - Object.keys(survivingHashes).length;
-        await writeHashesFileContents(hashesPath(projectDir), survivingHashes);
+        await writeHashesFileContents(hashesPath(scopeDir), survivingHashes);
         state.fileHashes = survivingHashes;
     }, lockOpts);
 
@@ -296,8 +298,8 @@ export async function loadCommandRunFile(filePath: string): Promise<CommandRunEn
 // `tmp+rename`, so no two writers' bytes ever interleave even though the final on-disk content reflects
 // only the last writer's record. Dirty tracking ensures we only call this for entries the current hook
 // actually modified, so concurrent updates to entries we did not touch are preserved.
-async function writeCommandRunFile(projectDir: string, entry: CommandRunEntry, lockOpts: WithFileLockOptions): Promise<void> {
-    const filePath = commandRunPath(projectDir, entry.commandKey);
+async function writeCommandRunFile(scopeDir: string, entry: CommandRunEntry, lockOpts: WithFileLockOptions): Promise<void> {
+    const filePath = commandRunPath(scopeDir, entry.commandKey);
     const lockPath = filePath + ".lock";
     await withFileLock(lockPath, async () => {
         await writeCommandRunFileContents(filePath, entry);

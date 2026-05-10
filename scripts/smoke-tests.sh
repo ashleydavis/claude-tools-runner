@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# End-to-end smoke tests for the tools-runner Stop hook.
+# End-to-end smoke tests for the claude-tools-runner Stop hook.
 #
 # Each scenario builds a fresh temp project (`mktemp -d`), `git init`s it, writes a
-# `.claude/tools-runner.yaml`, then invokes the bundled `plugin/dist/stop-hook.js` with `'{}'` on
+# `.claude/claude-tools-runner.yaml`, then invokes the bundled `plugin/dist/stop-hook.js` with `'{}'` on
 # stdin. All assertions are scripted (exit codes, file contents, mtimes, stdout greps) so the suite
 # can run unattended in CI.
 #
@@ -96,7 +96,7 @@ scenario_1_first_run() {
     HOME_A=$(mktemp -d)
     git -C "$SANDBOX_A" init -q
     mkdir -p "$SANDBOX_A/.claude" "$SANDBOX_A/src"
-    cat > "$SANDBOX_A/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$SANDBOX_A/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "src/**/*.ts"
@@ -165,7 +165,7 @@ scenario_3_cooldown_bypass_via_file_change() {
     # Sleep past 1 second so mtime advances at second granularity.
     sleep 1.1
 
-    cat > "$SANDBOX_A/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$SANDBOX_A/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "src/**/*.ts"
@@ -203,8 +203,8 @@ EOF
 scenario_4_clean_slate_after_state_delete() {
     start_scenario 4 "clean-slate after state delete"
     sleep 1.1
-    rm -f "$SANDBOX_A/.claude/tools-runner-hashes.yaml"
-    rm -rf "$SANDBOX_A/.claude/tools-runner-runs"
+    rm -f "$SANDBOX_A/.claude/claude-tools-runner/hashes.yaml"
+    rm -rf "$SANDBOX_A/.claude/claude-tools-runner/runs"
     local before_mtime
     before_mtime=$(stat -c %Y "$SANDBOX_A/smoke.out")
 
@@ -241,7 +241,7 @@ scenario_5_per_file_template() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude" "$sandbox/a" "$sandbox/b"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.md"
@@ -308,14 +308,14 @@ scenario_6_layered_config() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude" "$fake_home/.claude"
-    cat > "$fake_home/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$fake_home/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.txt"
     commands:
       - run: "echo HOME_OK > home.out"
 EOF
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.txt"
@@ -336,12 +336,12 @@ EOF
         fail_dump "$stderr_file"
     fi
 
-    if ! grep -qF "~/.claude/tools-runner.yaml:trigger" "$stdout_file"; then
-        fail_assert "stdout missing home YAML tag '~/.claude/tools-runner.yaml:trigger'"
+    if ! grep -qF "~/.claude/claude-tools-runner.yaml:trigger" "$stdout_file"; then
+        fail_assert "stdout missing home YAML tag '~/.claude/claude-tools-runner.yaml:trigger'"
         fail_dump "$stdout_file"
     fi
-    if ! grep -qE "^\[tools-runner\] \.claude/tools-runner\.yaml:trigger" "$stdout_file"; then
-        fail_assert "stdout missing project YAML tag '.claude/tools-runner.yaml:trigger'"
+    if ! grep -qE "^\[tools-runner\] \.claude/claude-tools-runner\.yaml:trigger" "$stdout_file"; then
+        fail_assert "stdout missing project YAML tag '.claude/claude-tools-runner.yaml:trigger'"
         fail_dump "$stdout_file"
     fi
 
@@ -370,7 +370,7 @@ scenario_7_state_file_shape() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude" "$sandbox/src"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "src/**/*.ts"
@@ -391,8 +391,8 @@ EOF
         fail_dump "$stderr_file"
     fi
 
-    local hashes_path="$sandbox/.claude/tools-runner-hashes.yaml"
-    local runs_dir="$sandbox/.claude/tools-runner-runs"
+    local hashes_path="$sandbox/.claude/claude-tools-runner/hashes.yaml"
+    local runs_dir="$sandbox/.claude/claude-tools-runner/runs"
     if [ ! -f "$hashes_path" ]; then
         fail_assert "hash cache file does not exist at $hashes_path"
     elif [ ! -d "$runs_dir" ]; then
@@ -465,7 +465,7 @@ scenario_8_group_by_per_group_fanout() {
     mkdir -p "$sandbox/.claude" \
              "$sandbox/packages/foo/src/lib" \
              "$sandbox/packages/bar/src"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "packages/*/src/**/*.ts"
@@ -517,7 +517,7 @@ scenario_9_brace_expansion() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.{ts,tsx}"
@@ -562,7 +562,7 @@ scenario_10_per_file_name_basename_ext() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.txt"
@@ -602,7 +602,7 @@ scenario_11_file_dir_per_directory_fanout() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude" "$sandbox/dirA" "$sandbox/dirB"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.log"
@@ -649,7 +649,7 @@ scenario_12_negation_pattern() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude" "$sandbox/src/excluded"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.ts"
@@ -691,7 +691,7 @@ scenario_13_multiple_commands_per_trigger() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.ts"
@@ -739,14 +739,14 @@ scenario_14_recursive_config_scan() {
              "$sandbox/sub/.claude" \
              "$sandbox/root-files" \
              "$sandbox/sub/sub-files"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "root-files/*.txt"
     commands:
       - run: "echo ROOT > root.out"
 EOF
-    cat > "$sandbox/sub/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/sub/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "sub-files/*.txt"
@@ -773,11 +773,11 @@ EOF
     if [ ! -f "$sandbox/sub/sub.out" ]; then
         fail_assert "sub/sub.out missing (subdirectory YAML did not fire)"
     fi
-    if ! grep -qE '^\[tools-runner\] \.claude/tools-runner\.yaml:trigger' "$stdout_file"; then
-        fail_assert "stdout missing root display path '.claude/tools-runner.yaml'"
+    if ! grep -qE '^\[tools-runner\] \.claude/claude-tools-runner\.yaml:trigger' "$stdout_file"; then
+        fail_assert "stdout missing root display path '.claude/claude-tools-runner.yaml'"
     fi
-    if ! grep -qE '^\[tools-runner\] sub/\.claude/tools-runner\.yaml:trigger' "$stdout_file"; then
-        fail_assert "stdout missing subdir display path 'sub/.claude/tools-runner.yaml'"
+    if ! grep -qE '^\[tools-runner\] sub/\.claude/claude-tools-runner\.yaml:trigger' "$stdout_file"; then
+        fail_assert "stdout missing subdir display path 'sub/.claude/claude-tools-runner.yaml'"
         fail_dump "$stdout_file"
     fi
 
@@ -794,7 +794,7 @@ scenario_15_failing_command() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.ts"
@@ -836,7 +836,7 @@ scenario_16_per_command_log_file() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.ts"
@@ -857,9 +857,9 @@ EOF
         fail_dump "$stderr_file"
     fi
     local log_files
-    log_files=$(find "$sandbox/.claude/tools-runner-log" -mindepth 4 -type f -name '*.log' 2>/dev/null || true)
+    log_files=$(find "$sandbox/.claude/claude-tools-runner/log" -mindepth 4 -type f -name '*.log' 2>/dev/null || true)
     if [ -z "$log_files" ]; then
-        fail_assert "no per-command log file found under .claude/tools-runner-log"
+        fail_assert "no per-command log file found under .claude/claude-tools-runner/log"
     else
         local first_log
         first_log=$(printf '%s\n' "$log_files" | head -n1)
@@ -886,7 +886,7 @@ scenario_17_no_matching_files() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.foo"
@@ -927,7 +927,7 @@ scenario_18_custom_cwd() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude" "$sandbox/sub"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.ts"
@@ -968,7 +968,7 @@ scenario_19_timeout_kills_command() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.ts"
@@ -1008,7 +1008,7 @@ scenario_20_yaml_parse_error() {
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude"
     # Unclosed flow sequence forces a YAML parse error at the top level.
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers: [ { paths: ["**/*.ts"], commands: [
 EOF
 
@@ -1023,8 +1023,8 @@ EOF
         fail_assert "exit=$exit_code (expected 1); stderr:"
         fail_dump "$stderr_file"
     fi
-    if ! grep -qF "[tools-runner] failed to load .claude/tools-runner.yaml:" "$stderr_file"; then
-        fail_assert "stderr missing '[tools-runner] failed to load .claude/tools-runner.yaml:'"
+    if ! grep -qF "[tools-runner] failed to load .claude/claude-tools-runner.yaml:" "$stderr_file"; then
+        fail_assert "stderr missing '[tools-runner] failed to load .claude/claude-tools-runner.yaml:'"
         fail_dump "$stderr_file"
     fi
 
@@ -1041,7 +1041,7 @@ scenario_21_hash_gate_skip_after_cooldown_expires() {
     fake_home=$(mktemp -d)
     git -C "$sandbox" init -q
     mkdir -p "$sandbox/.claude"
-    cat > "$sandbox/.claude/tools-runner.yaml" <<'EOF'
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
 triggers:
   - paths:
       - "**/*.ts"
@@ -1095,6 +1095,266 @@ EOF
     report
 }
 
+scenario_22_single_project_single_repo_single_config() {
+    start_scenario 22 "single project, single repo, one config: per-config state under .claude/claude-tools-runner/"
+    local sandbox
+    sandbox=$(mktemp -d)
+    local fake_home
+    fake_home=$(mktemp -d)
+    git -C "$sandbox" init -q
+    mkdir -p "$sandbox/.claude" "$sandbox/src"
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
+triggers:
+  - paths:
+      - "src/**/*.ts"
+    commands:
+      - run: "echo SOLO > solo.out"
+        cooldown: "0s"
+EOF
+    : > "$sandbox/src/foo.ts"
+
+    local stdout_file
+    stdout_file=$(mktemp)
+    local stderr_file
+    stderr_file=$(mktemp)
+    local exit_code
+    exit_code=$(invoke_hook "$stdout_file" "$stderr_file" "$sandbox" "$fake_home")
+
+    if [ "$exit_code" != "0" ]; then
+        fail_assert "exit=$exit_code; stderr:"
+        fail_dump "$stderr_file"
+    fi
+    if [ ! -f "$sandbox/solo.out" ]; then
+        fail_assert "solo.out not produced"
+    fi
+    if [ ! -d "$sandbox/.claude/claude-tools-runner" ]; then
+        fail_assert ".claude/claude-tools-runner/ directory was not created next to the config"
+    fi
+    if [ ! -f "$sandbox/.claude/claude-tools-runner/hashes.yaml" ]; then
+        fail_assert ".claude/claude-tools-runner/hashes.yaml was not written"
+    fi
+    if [ ! -d "$sandbox/.claude/claude-tools-runner/runs" ]; then
+        fail_assert ".claude/claude-tools-runner/runs directory was not created"
+    fi
+    if [ ! -d "$sandbox/.claude/claude-tools-runner/log" ]; then
+        fail_assert ".claude/claude-tools-runner/log directory was not created"
+    fi
+    if [ ! -f "$sandbox/.claude/claude-tools-runner/.gitignore" ]; then
+        fail_assert ".claude/claude-tools-runner/.gitignore was not written"
+    fi
+    # The audit log's CONFIG line must announce the layer's state and log paths.
+    local audit_log
+    audit_log=$(find "$sandbox/.claude/claude-tools-runner/log" -type f -name '*.log' | head -n1)
+    if [ -z "$audit_log" ] || ! grep -qF "state=$sandbox/.claude/claude-tools-runner/hashes.yaml" "$audit_log"; then
+        fail_assert "audit log did not announce the layer's hashes path"
+        if [ -n "$audit_log" ]; then
+            fail_dump "$audit_log"
+        fi
+    fi
+
+    rm -f "$stdout_file" "$stderr_file"
+    rm -rf "$sandbox" "$fake_home"
+    report
+}
+
+scenario_23_parent_with_two_nested_repos() {
+    start_scenario 23 "parent project, two nested repos, three configs: each gets its own state directory"
+    local sandbox
+    sandbox=$(mktemp -d)
+    local fake_home
+    fake_home=$(mktemp -d)
+
+    # The parent dir is CLAUDE_PROJECT_DIR but is NOT itself a git repo. Two nested git repos sit under it.
+    # Three configs are distributed across them: one in each nested repo's root plus a deeper one inside repoA.
+    local repoA="$sandbox/repoA"
+    local repoB="$sandbox/repoB"
+    local repoA_sub="$repoA/sub"
+    mkdir -p "$repoA/.claude" "$repoA_sub/.claude" "$repoB/.claude"
+    git -C "$repoA" init -q
+    git -C "$repoB" init -q
+
+    cat > "$repoA/.claude/claude-tools-runner.yaml" <<'EOF'
+triggers:
+  - paths:
+      - "**/*.ts"
+    commands:
+      - run: "echo A > '${{project}}/a-fired.txt'"
+        cooldown: "0s"
+EOF
+    cat > "$repoA_sub/.claude/claude-tools-runner.yaml" <<'EOF'
+triggers:
+  - paths:
+      - "**/*.ts"
+    commands:
+      - run: "echo SUB > '${{project}}/sub-fired.txt'"
+        cooldown: "0s"
+EOF
+    cat > "$repoB/.claude/claude-tools-runner.yaml" <<'EOF'
+triggers:
+  - paths:
+      - "**/*.ts"
+    commands:
+      - run: "echo B > '${{project}}/b-fired.txt'"
+        cooldown: "0s"
+EOF
+
+    # One changed file in each scope so all three configs evaluate against something. The repoA root file
+    # is at repoA/foo.ts (NOT under sub/) so sub's scoped change-collection does not see it.
+    : > "$repoA/foo.ts"
+    : > "$repoA_sub/sub-foo.ts"
+    : > "$repoB/foo.ts"
+
+    local stdout_file
+    stdout_file=$(mktemp)
+    local stderr_file
+    stderr_file=$(mktemp)
+    local exit_code
+    exit_code=$(invoke_hook "$stdout_file" "$stderr_file" "$sandbox" "$fake_home")
+
+    if [ "$exit_code" != "0" ]; then
+        fail_assert "exit=$exit_code; stderr:"
+        fail_dump "$stderr_file"
+    fi
+
+    if [ ! -f "$repoA/a-fired.txt" ]; then
+        fail_assert "repoA's config did not fire (no a-fired.txt)"
+    fi
+    if [ ! -f "$repoA_sub/sub-fired.txt" ]; then
+        fail_assert "repoA/sub's config did not fire (no sub-fired.txt)"
+    fi
+    if [ ! -f "$repoB/b-fired.txt" ]; then
+        fail_assert "repoB's config did not fire (no b-fired.txt)"
+    fi
+
+    # Each config gets its own .claude/claude-tools-runner/ directory next to it.
+    for layer_dir in "$repoA" "$repoA_sub" "$repoB"; do
+        if [ ! -d "$layer_dir/.claude/claude-tools-runner" ]; then
+            fail_assert "expected $layer_dir/.claude/claude-tools-runner/ to exist"
+            continue
+        fi
+        if [ ! -f "$layer_dir/.claude/claude-tools-runner/hashes.yaml" ]; then
+            fail_assert "expected $layer_dir/.claude/claude-tools-runner/hashes.yaml to exist"
+        fi
+        if [ ! -d "$layer_dir/.claude/claude-tools-runner/runs" ]; then
+            fail_assert "expected $layer_dir/.claude/claude-tools-runner/runs/ to exist"
+        fi
+        if [ ! -d "$layer_dir/.claude/claude-tools-runner/log" ]; then
+            fail_assert "expected $layer_dir/.claude/claude-tools-runner/log/ to exist"
+        fi
+    done
+
+    # Parent dir must NOT have its own state directory (no config there).
+    if [ -d "$sandbox/.claude/claude-tools-runner" ]; then
+        fail_assert "parent dir should not have .claude/claude-tools-runner/ (no config there); contents:"
+        ls -la "$sandbox/.claude/claude-tools-runner" >> "$stderr_file" 2>&1 || true
+        fail_dump "$stderr_file"
+    fi
+
+    if ! grep -qF "summary: 3 pass, 0 fail" "$stdout_file"; then
+        fail_assert "expected 3 pass invocations across the three layers; stdout:"
+        fail_dump "$stdout_file"
+    fi
+
+    rm -f "$stdout_file" "$stderr_file"
+    rm -rf "$sandbox" "$fake_home"
+    report
+}
+
+scenario_24_parent_repo_with_one_nested_repo() {
+    start_scenario 24 "parent repo with one nested repo, two configs: state isolated per config"
+    local sandbox
+    sandbox=$(mktemp -d)
+    local fake_home
+    fake_home=$(mktemp -d)
+
+    # Parent IS a git repo and is CLAUDE_PROJECT_DIR. One nested repo lives under it. Two configs total:
+    # one in the parent and one in the nested.
+    local nested="$sandbox/nested"
+    git -C "$sandbox" init -q
+    mkdir -p "$sandbox/.claude" "$nested/.claude"
+    git -C "$nested" init -q
+
+    cat > "$sandbox/.claude/claude-tools-runner.yaml" <<'EOF'
+triggers:
+  - paths:
+      - "*.ts"
+    commands:
+      - run: "echo PARENT > '${{project}}/parent-fired.txt'"
+        cooldown: "0s"
+EOF
+    cat > "$nested/.claude/claude-tools-runner.yaml" <<'EOF'
+triggers:
+  - paths:
+      - "**/*.ts"
+    commands:
+      - run: "echo NESTED > '${{project}}/nested-fired.txt'"
+        cooldown: "0s"
+EOF
+
+    # Parent's config uses `*.ts` (top-level only) so nested/foo.ts does not match the parent's pattern;
+    # this proves scope isolation of the file lists, not just the side-effect files.
+    : > "$sandbox/parent.ts"
+    : > "$nested/foo.ts"
+
+    local stdout_file
+    stdout_file=$(mktemp)
+    local stderr_file
+    stderr_file=$(mktemp)
+    local exit_code
+    exit_code=$(invoke_hook "$stdout_file" "$stderr_file" "$sandbox" "$fake_home")
+
+    if [ "$exit_code" != "0" ]; then
+        fail_assert "exit=$exit_code; stderr:"
+        fail_dump "$stderr_file"
+    fi
+
+    if [ ! -f "$sandbox/parent-fired.txt" ]; then
+        fail_assert "parent's config did not fire"
+    fi
+    if [ ! -f "$nested/nested-fired.txt" ]; then
+        fail_assert "nested's config did not fire"
+    fi
+
+    if [ ! -f "$sandbox/.claude/claude-tools-runner/hashes.yaml" ]; then
+        fail_assert "parent layer's hashes.yaml not at expected location"
+    fi
+    if [ ! -f "$nested/.claude/claude-tools-runner/hashes.yaml" ]; then
+        fail_assert "nested layer's hashes.yaml not at expected location"
+    fi
+
+    # Each layer's runs directory must contain exactly one entry (one command per layer).
+    local parent_run_count
+    parent_run_count=$(find "$sandbox/.claude/claude-tools-runner/runs" -maxdepth 1 -name '*.yaml' -type f | wc -l)
+    local nested_run_count
+    nested_run_count=$(find "$nested/.claude/claude-tools-runner/runs" -maxdepth 1 -name '*.yaml' -type f | wc -l)
+    if [ "$parent_run_count" != "1" ]; then
+        fail_assert "expected 1 run file in parent layer, found $parent_run_count"
+    fi
+    if [ "$nested_run_count" != "1" ]; then
+        fail_assert "expected 1 run file in nested layer, found $nested_run_count"
+    fi
+
+    # The nested layer's run file must NOT live under the parent layer's runs/ tree (state isolation).
+    local nested_key
+    nested_key=$(find "$nested/.claude/claude-tools-runner/runs" -maxdepth 1 -name '*.yaml' -type f | head -n1)
+    if [ -n "$nested_key" ]; then
+        local nested_basename
+        nested_basename=$(basename "$nested_key")
+        if [ -f "$sandbox/.claude/claude-tools-runner/runs/$nested_basename" ]; then
+            fail_assert "nested layer's run file ($nested_basename) leaked into the parent layer's runs/ tree"
+        fi
+    fi
+
+    if ! grep -qF "summary: 2 pass, 0 fail" "$stdout_file"; then
+        fail_assert "expected exactly 2 pass invocations; stdout:"
+        fail_dump "$stdout_file"
+    fi
+
+    rm -f "$stdout_file" "$stderr_file"
+    rm -rf "$sandbox" "$fake_home"
+    report
+}
+
 scenario_1_first_run
 scenario_2_cooldown_skip
 scenario_3_cooldown_bypass_via_file_change
@@ -1116,6 +1376,9 @@ scenario_18_custom_cwd
 scenario_19_timeout_kills_command
 scenario_20_yaml_parse_error
 scenario_21_hash_gate_skip_after_cooldown_expires
+scenario_22_single_project_single_repo_single_config
+scenario_23_parent_with_two_nested_repos
+scenario_24_parent_repo_with_one_nested_repo
 
 TOTAL=$((PASS_COUNT + FAIL_COUNT))
 echo "Results: $PASS_COUNT/$TOTAL passed, $FAIL_COUNT failed"

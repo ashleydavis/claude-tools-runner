@@ -61,10 +61,18 @@ export interface IAuditHookStartedEntry extends IAuditEntryBase {
 // `hook_error` instead, after which the hook aborts.
 export interface IAuditConfigLoadEntry extends IAuditEntryBase {
     type: "config_load";
-    // Display path of the YAML file (e.g. `~/.claude/tools-runner.yaml` or a project-relative path).
+    // Display path of the YAML file (e.g. `~/.claude/claude-tools-runner.yaml` or a project-relative path).
     filePath: string;
     // Number of triggers parsed out of the file. Zero is a valid value (the layer simply contributes nothing).
     triggerCount: number;
+    // Absolute path of the per-layer hash cache YAML written by `saveState`. Surfaced here (in addition to
+    // `state_saved`) so users can see up-front where state for this config lives without waiting for the
+    // hook to finish running its commands.
+    hashesPath: string;
+    // Absolute path of the directory holding one YAML file per `commandKey` for this layer.
+    runsDir: string;
+    // Absolute path of the per-layer audit + per-command log tree (`<scopeDir>/.claude/claude-tools-runner/log`).
+    logBaseDir: string;
 }
 
 // One element of `IAuditChangedFilesEntry.files`. Single-field object so future additions (e.g. a status flag)
@@ -186,9 +194,12 @@ export interface IAuditCommandResultEntry extends IAuditEntryBase {
 // itself; the cardinality fields are post-prune so they reflect what was actually written.
 export interface IAuditStateSavedEntry extends IAuditEntryBase {
     type: "state_saved";
-    // Absolute path of the per-project hash cache YAML (`.claude/tools-runner-hashes.yaml`).
+    // Display path of the YAML layer this state save corresponds to.
+    sourceFile: string;
+    // Absolute path of the per-layer hash cache YAML (`.claude/claude-tools-runner/hashes.yaml`).
     hashesPath: string;
-    // Absolute path of the directory holding one YAML file per `commandKey` (`.claude/tools-runner-runs/`).
+    // Absolute path of the directory holding one YAML file per `commandKey`
+    // (`.claude/claude-tools-runner/runs/`).
     runsDir: string;
     // Number of `commandRuns` entries surviving on disk after this save (post-TTL-prune).
     commandRunsCount: number;
@@ -259,10 +270,11 @@ export class NullAuditLogger implements IAuditLogger {
     }
 }
 
-// Returns the absolute root of the audit + per-command log tree for `projectDir`. The tree lives under
-// `${projectDir}/.claude/tools-runner-log` so it sits next to the per-project `tools-runner-state.yaml`.
-export function resolveLogBaseDir(projectDir: string): string {
-    return path.join(projectDir, ".claude", "tools-runner-log");
+// Returns the absolute root of the audit + per-command log tree for `scopeDir`. The tree lives under
+// `${scopeDir}/.claude/claude-tools-runner/log` so it sits next to the per-layer `hashes.yaml` and `runs/`
+// directory. `scopeDir` is the directory containing the configuration file's `.claude/` directory.
+export function resolveLogBaseDir(scopeDir: string): string {
+    return path.join(scopeDir, ".claude", "claude-tools-runner", "log");
 }
 
 // Returns the absolute path of the JSON Lines audit log file for `now`. Layout:
@@ -356,7 +368,7 @@ export function renderEntryBody(entry: IAuditLogEntry): string {
         return `started cwd=${entry.cwd} stop_hook_active=${entry.stopHookActive}`;
     }
     if (entry.type === "config_load") {
-        return `${entry.filePath} (${entry.triggerCount} triggers)`;
+        return `${entry.filePath} (${entry.triggerCount} triggers); state=${entry.hashesPath}, runs=${entry.runsDir}, log=${entry.logBaseDir}`;
     }
     if (entry.type === "changed_files") {
         const fullList = entry.files.map(file => file.path).join(", ");
@@ -381,7 +393,7 @@ export function renderEntryBody(entry: IAuditLogEntry): string {
         return `${entry.sourceFile}:${entry.sourceLine} cmd=${entry.commandIndex} ${entry.outcome} exit=${entry.exitCode} ${entry.durationMs}ms`;
     }
     if (entry.type === "state_saved") {
-        return `${entry.hashesPath} + ${entry.runsDir} (${entry.commandRunsCount} runs, ${entry.fileHashesCount} hashes; pruned ${entry.prunedCommandRuns}+${entry.prunedFileHashes})`;
+        return `${entry.sourceFile}: ${entry.hashesPath} + ${entry.runsDir} (${entry.commandRunsCount} runs, ${entry.fileHashesCount} hashes; pruned ${entry.prunedCommandRuns}+${entry.prunedFileHashes})`;
     }
     if (entry.type === "hook_completed") {
         const skipPart = entry.skipReason !== undefined ? ` skip=${entry.skipReason}` : "";
@@ -452,17 +464,67 @@ export async function cleanupOldMonths(baseDir: string, now: Date): Promise<void
     }
 }
 
-// Builds a `FileAuditLogger` rooted at `<projectDir>/.claude/tools-runner-log` after pruning months that have
-// fallen outside the retention window. The Stop hook awaits this once, before `hook_started` is emitted.
-// Cleanup is fire-and-await: the logger is returned only once stale months are removed so the next entry
-// finds a clean tree. A `.gitignore` containing `*` is dropped at the audit-log root so the directory's
-// contents are invisible to `git status` even if the user has not added the directory to their project's
-// own `.gitignore`. The audit log writes that follow (`hook_started`, etc.) must not appear as untracked
-// files; otherwise `collectChangedFiles` would surface them and turn an idle Stop event into a busy one.
-export async function createLogger(projectDir: string, now: Date): Promise<FileAuditLogger> {
-    const baseDir = resolveLogBaseDir(projectDir);
+// Routes each `IAuditLogEntry` to the audit logger that owns the layer it came from. Per-layer entries
+// (those carrying a `sourceFile` or `filePath` that matches a known layer) go to that layer's logger only.
+// Global entries (`hook_started`, `changed_files`, `hook_completed`, `hook_error`) and any entry whose
+// layer is unknown fan out to every registered logger so each layer's log file is self-contained.
+export class MultiLayerLogger implements IAuditLogger {
+    // Map from layer display path (e.g. `.claude/claude-tools-runner.yaml`) to that layer's audit logger.
+    // Insertion order is preserved; iteration in that order matches the order layers were registered.
+    private readonly loggersByDisplayPath: Map<string, IAuditLogger>;
+
+    constructor(loggersByDisplayPath: Map<string, IAuditLogger>) {
+        this.loggersByDisplayPath = loggersByDisplayPath;
+    }
+
+    async log(entry: IAuditLogEntry): Promise<void> {
+        const layerKey = layerKeyForEntry(entry);
+        if (layerKey !== null) {
+            const target = this.loggersByDisplayPath.get(layerKey);
+            if (target !== undefined) {
+                await target.log(entry);
+                return;
+            }
+        }
+        for (const logger of this.loggersByDisplayPath.values()) {
+            await logger.log(entry);
+        }
+    }
+}
+
+// Returns the layer display path that owns `entry`, or null when the entry is global (no layer scope).
+// Used by `MultiLayerLogger.log` to decide whether to fan out or route to a single logger.
+export function layerKeyForEntry(entry: IAuditLogEntry): string | null {
+    if (entry.type === "config_load") {
+        return entry.filePath;
+    }
+    if (entry.type === "trigger_match"
+        || entry.type === "gate_decision"
+        || entry.type === "command_started"
+        || entry.type === "command_result"
+        || entry.type === "state_saved") {
+        return entry.sourceFile;
+    }
+    return null;
+}
+
+// Builds a `FileAuditLogger` rooted at `<scopeDir>/.claude/claude-tools-runner/log` after pruning months
+// that have fallen outside the retention window. The Stop hook awaits this once per layer, before
+// `hook_started` is emitted. Cleanup is fire-and-await: the logger is returned only once stale months are
+// removed so the next entry finds a clean tree. A `.gitignore` containing `*` is dropped at the
+// claude-tools-runner root so the directory's contents are invisible to `git status` even if the user has
+// not added the directory to their project's own `.gitignore`. The audit log writes that follow
+// (`hook_started`, etc.) must not appear as untracked files; otherwise `collectChangedFiles` would surface
+// them and turn an idle Stop event into a busy one.
+export async function createLogger(scopeDir: string, now: Date): Promise<FileAuditLogger> {
+    const baseDir = resolveLogBaseDir(scopeDir);
     await cleanupOldMonths(baseDir, now);
     await fs.mkdir(baseDir, { recursive: true });
-    await fs.writeFile(path.join(baseDir, ".gitignore"), "*\n");
+
+    // Drop a `.gitignore` one level up at the `claude-tools-runner/` root so every state and log file the
+    // plugin writes (hashes.yaml, runs/, log/) is hidden from `git status` automatically.
+    const claudeToolsRunnerDir = path.dirname(baseDir);
+    await fs.writeFile(path.join(claudeToolsRunnerDir, ".gitignore"), "*\n");
+
     return new FileAuditLogger(baseDir, now);
 }

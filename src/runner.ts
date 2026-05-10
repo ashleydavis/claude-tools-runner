@@ -93,12 +93,12 @@ export interface RunCommandsOptions {
     now?: () => Date;
     // Override for the audit logger. Defaults to `NullAuditLogger` (no-op).
     logger?: IAuditLogger;
-    // Root of the unified per-command log file tree. Defaults to `<cwd>/.claude/tools-runner-log`. The
-    // runner appends `YYYY-MM/DD/HH/<filename>` itself. Tests pass an `fs.mkdtemp` directory.
+    // Root of the unified per-command log file tree. Defaults to `<cwd>/.claude/claude-tools-runner/log`.
+    // The runner appends `YYYY-MM/DD/HH/<filename>` itself. Tests pass an `fs.mkdtemp` directory.
     logBaseDir?: string;
     // Project directory used to relativise `logFile` paths in audit-log entries (the entries record paths
     // relative to `projectDir` so the audit log stays portable). Defaults to deriving from `logBaseDir`
-    // (`<logBaseDir>/../..`). `RunResult.logFile` always stays absolute regardless of this option.
+    // (`<logBaseDir>/../../..`). `RunResult.logFile` always stays absolute regardless of this option.
     projectDir?: string;
 }
 
@@ -204,8 +204,8 @@ export async function runCommands(prepared: CompiledCommand[], state: State, now
     const spawnFn = opts?.spawn ?? defaultSpawner;
     const nowFactory = opts?.now ?? (() => new Date());
     const logger = opts?.logger ?? new NullAuditLogger();
-    const logBaseDir = opts?.logBaseDir ?? path.join(process.cwd(), ".claude", "tools-runner-log");
-    const projectDir = opts?.projectDir ?? path.resolve(logBaseDir, "..", "..");
+    const logBaseDir = opts?.logBaseDir ?? path.join(process.cwd(), ".claude", "claude-tools-runner", "log");
+    const projectDir = opts?.projectDir ?? path.resolve(logBaseDir, "..", "..", "..");
 
     const tasks: Promise<RunResult>[] = [];
     for (const compiled of prepared) {

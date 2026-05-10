@@ -6,15 +6,15 @@ import { Readable } from "node:stream";
 import { resolveJsonLogPath } from "../audit-log";
 import { HookHandledError, main, readStdin, runStopHook } from "../stop-hook";
 
-// Reads every JSON Lines audit-log entry written under `<projectDir>/.claude/tools-runner-log` for the given
+// Reads every JSON Lines audit-log entry written under `<projectDir>/.claude/claude-tools-runner/log` for the given
 // `now` and returns the parsed objects in append order. Used by the audit-log assertions to verify that the
 // Stop hook emitted the expected sequence of entries (hook_started, config_load, ..., hook_completed).
 interface IAuditEntryRecord {
     type: string;
     [extraField: string]: unknown;
 }
-async function readAuditEntries(projectDir: string, now: Date): Promise<IAuditEntryRecord[]> {
-    const baseDir = path.join(projectDir, ".claude", "tools-runner-log");
+async function readAuditEntries(scopeDir: string, now: Date): Promise<IAuditEntryRecord[]> {
+    const baseDir = path.join(scopeDir, ".claude", "claude-tools-runner", "log");
     const jsonPath = resolveJsonLogPath(baseDir, now);
     let text: string;
     try {
@@ -436,7 +436,7 @@ describe("runStopHook", () => {
         process.env["HOME"] = homeDir;
         await initGitRepo(projectDir);
         await fs.mkdir(path.join(projectDir, ".claude"), { recursive: true });
-        await fs.writeFile(path.join(projectDir, ".claude", "tools-runner.yaml"), "triggers:\n  - paths:\n      - 'src/**/*.ts'\n    commands:\n      - run: 'true'\n");
+        await fs.writeFile(path.join(projectDir, ".claude", "claude-tools-runner.yaml"), "triggers:\n  - paths:\n      - 'src/**/*.ts'\n    commands:\n      - run: 'true'\n");
         // Commit the YAML so it does not show up as untracked in `git status` and the test exercises the
         // genuine "no changed files" path rather than "no triggers matched".
         await runGit(projectDir, ["add", "-A"]);
@@ -455,9 +455,9 @@ describe("runStopHook", () => {
         process.env["HOME"] = homeDir;
         await initGitRepo(projectDir);
         await fs.mkdir(path.join(homeDir, ".claude"), { recursive: true });
-        await fs.writeFile(path.join(homeDir, ".claude", "tools-runner.yaml"), "triggers: [\nbroken yaml here");
+        await fs.writeFile(path.join(homeDir, ".claude", "claude-tools-runner.yaml"), "triggers: [\nbroken yaml here");
         await fs.mkdir(path.join(projectDir, ".claude"), { recursive: true });
-        await fs.writeFile(path.join(projectDir, ".claude", "tools-runner.yaml"), "triggers:\n  - paths:\n      - 'src/**/*.ts'\n    commands:\n      - run: 'true'\n");
+        await fs.writeFile(path.join(projectDir, ".claude", "claude-tools-runner.yaml"), "triggers:\n  - paths:\n      - 'src/**/*.ts'\n    commands:\n      - run: 'true'\n");
         await fs.mkdir(path.join(projectDir, "src"), { recursive: true });
         await fs.writeFile(path.join(projectDir, "src", "a.ts"), "alpha");
         restoreStdin();
@@ -491,7 +491,7 @@ describe("runStopHook", () => {
             "      - run: \"printf '%s' '${{project}}' > '${{project}}/project-marker.txt'\"\n" +
             "        cooldown: '0s'\n" +
             "        timeout: '30s'\n";
-        await fs.writeFile(path.join(subDir, ".claude", "tools-runner.yaml"), yamlBody);
+        await fs.writeFile(path.join(subDir, ".claude", "claude-tools-runner.yaml"), yamlBody);
         await fs.writeFile(path.join(subDir, "trigger.ts"), "alpha");
         restoreStdin();
         restoreStdin = installStdin("{}");
@@ -515,11 +515,11 @@ describe("runStopHook", () => {
         await fs.mkdir(path.join(aDir, ".claude"), { recursive: true });
         await fs.mkdir(path.join(bDir, ".claude"), { recursive: true });
         await fs.writeFile(
-            path.join(aDir, ".claude", "tools-runner.yaml"),
+            path.join(aDir, ".claude", "claude-tools-runner.yaml"),
             "triggers:\n  - paths:\n      - '**/*.ts'\n    commands:\n      - run: \"printf a > '${{project}}/a-fired.txt'\"\n        cooldown: '0s'\n        timeout: '30s'\n",
         );
         await fs.writeFile(
-            path.join(bDir, ".claude", "tools-runner.yaml"),
+            path.join(bDir, ".claude", "claude-tools-runner.yaml"),
             "triggers:\n  - paths:\n      - '**/*.ts'\n    commands:\n      - run: \"printf b > '${{project}}/b-fired.txt'\"\n        cooldown: '0s'\n        timeout: '30s'\n",
         );
         // Only `a/` has a changed file, so `b`'s trigger must not fire even though its glob would match.
@@ -542,12 +542,12 @@ describe("runStopHook", () => {
         await initGitRepo(projectDir);
         await fs.mkdir(path.join(homeDir, ".claude"), { recursive: true });
         await fs.writeFile(
-            path.join(homeDir, ".claude", "tools-runner.yaml"),
+            path.join(homeDir, ".claude", "claude-tools-runner.yaml"),
             "triggers:\n  - paths:\n      - '**/*.ts'\n    commands:\n      - run: \"printf home > '" + projectDir.replace(/'/g, "'\\''") + "/home-fired.txt'\"\n        cooldown: '0s'\n        timeout: '30s'\n",
         );
         await fs.mkdir(path.join(projectDir, ".claude"), { recursive: true });
         await fs.writeFile(
-            path.join(projectDir, ".claude", "tools-runner.yaml"),
+            path.join(projectDir, ".claude", "claude-tools-runner.yaml"),
             "triggers:\n  - paths:\n      - '**/*.ts'\n    commands:\n      - run: \"printf project > '${{project}}/project-fired.txt'\"\n        cooldown: '0s'\n        timeout: '30s'\n",
         );
         await fs.writeFile(path.join(projectDir, "x.ts"), "alpha");
@@ -576,7 +576,7 @@ describe("runStopHook", () => {
         await initGitRepo(projectDir);
         await fs.mkdir(path.join(projectDir, ".claude"), { recursive: true });
         await fs.writeFile(
-            path.join(projectDir, ".claude", "tools-runner.yaml"),
+            path.join(projectDir, ".claude", "claude-tools-runner.yaml"),
             "triggers:\n  - paths:\n      - '**/*.ts'\n    commands:\n      - run: 'echo hi'\n        cooldown: '0s'\n        timeout: '30s'\n",
         );
         await fs.writeFile(path.join(projectDir, "x.ts"), "alpha");
@@ -588,8 +588,8 @@ describe("runStopHook", () => {
         await runHookAllowingExit();
 
         expect(installedIO.captured.exitCode).toBe(null);
-        const projectLogRoot = path.join(projectDir, ".claude", "tools-runner-log");
-        const cwdLogRoot = path.join(tempDir, ".claude", "tools-runner-log");
+        const projectLogRoot = path.join(projectDir, ".claude", "claude-tools-runner", "log");
+        const cwdLogRoot = path.join(tempDir, ".claude", "claude-tools-runner", "log");
         const projectLogRootExists = await fileExists(projectLogRoot);
         const cwdLogRootExists = await fileExists(cwdLogRoot);
         expect(projectLogRootExists).toBe(true);
@@ -646,7 +646,7 @@ describe("runStopHook", () => {
         await initGitRepo(projectDir);
         await fs.mkdir(path.join(homeDir, ".claude"), { recursive: true });
         // Empty home YAML: produces a `config_load` entry with triggerCount: 0 plus zero triggers.
-        await fs.writeFile(path.join(homeDir, ".claude", "tools-runner.yaml"), "triggers: []\n");
+        await fs.writeFile(path.join(homeDir, ".claude", "claude-tools-runner.yaml"), "triggers: []\n");
         await fs.mkdir(path.join(projectDir, ".claude"), { recursive: true });
         // Project YAML: trigger sits on line 4 (1-based: 1=triggers:, 2=- paths:, 3=    - '...', 4=  commands: — actually we
         // pin the trigger key on line 2, with the trigger node beginning at the leading dash. picomatch reads
@@ -660,7 +660,7 @@ describe("runStopHook", () => {
             "      - run: 'echo audit'\n" +
             "        cooldown: '0s'\n" +
             "        timeout: '30s'\n";
-        await fs.writeFile(path.join(projectDir, ".claude", "tools-runner.yaml"), projectYaml);
+        await fs.writeFile(path.join(projectDir, ".claude", "claude-tools-runner.yaml"), projectYaml);
         await fs.writeFile(path.join(projectDir, "x.ts"), "alpha");
         restoreStdin();
         restoreStdin = installStdin("{}");
@@ -680,22 +680,22 @@ describe("runStopHook", () => {
         expect(types).toContain("state_saved");
         expect(types).toContain("hook_completed");
 
-        const projectMatchEntries = entries.filter(entry => entry.type === "trigger_match" && entry.sourceFile === ".claude/tools-runner.yaml");
+        const projectMatchEntries = entries.filter(entry => entry.type === "trigger_match" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
         expect(projectMatchEntries).toHaveLength(1);
         const matchEntry = projectMatchEntries[0];
         expect(matchEntry.sourceLine).toBe(2);
         expect(matchEntry.matchedFiles).toEqual(["x.ts"]);
 
-        const projectGateEntries = entries.filter(entry => entry.type === "gate_decision" && entry.sourceFile === ".claude/tools-runner.yaml");
+        const projectGateEntries = entries.filter(entry => entry.type === "gate_decision" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
         expect(projectGateEntries).toHaveLength(1);
         expect(projectGateEntries[0].sourceLine).toBe(2);
         expect(projectGateEntries[0].decision).toBe("run");
 
-        const projectStartEntries = entries.filter(entry => entry.type === "command_started" && entry.sourceFile === ".claude/tools-runner.yaml");
+        const projectStartEntries = entries.filter(entry => entry.type === "command_started" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
         expect(projectStartEntries).toHaveLength(1);
         expect(projectStartEntries[0].sourceLine).toBe(2);
 
-        const projectResultEntries = entries.filter(entry => entry.type === "command_result" && entry.sourceFile === ".claude/tools-runner.yaml");
+        const projectResultEntries = entries.filter(entry => entry.type === "command_result" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
         expect(projectResultEntries).toHaveLength(1);
         expect(projectResultEntries[0].sourceLine).toBe(2);
         expect(projectResultEntries[0].outcome).toBe("pass");
@@ -706,23 +706,23 @@ describe("runStopHook", () => {
         process.env["HOME"] = homeDir;
         await initGitRepo(projectDir);
         await fs.mkdir(path.join(projectDir, ".claude"), { recursive: true });
-        await fs.writeFile(path.join(projectDir, ".claude", "tools-runner.yaml"), "triggers: [\nbroken yaml here");
+        await fs.writeFile(path.join(projectDir, ".claude", "claude-tools-runner.yaml"), "triggers: [\nbroken yaml here");
         restoreStdin();
         restoreStdin = installStdin("{}");
 
         await runHookAllowingExit();
 
         expect(installedIO.captured.exitCode).toBe(1);
-        expect(joinedStderr(installedIO.captured)).toContain("failed to load .claude/tools-runner.yaml");
+        expect(joinedStderr(installedIO.captured)).toContain("failed to load .claude/claude-tools-runner.yaml");
         const entries = await readAuditEntries(projectDir, new Date());
         const types = entries.map(entry => entry.type);
         expect(types).toContain("hook_started");
         expect(types).toContain("hook_error");
         const errorEntry = entries.find(entry => entry.type === "hook_error")!;
         expect(typeof errorEntry.message).toBe("string");
-        expect((errorEntry.message as string)).toContain("failed to load .claude/tools-runner.yaml");
+        expect((errorEntry.message as string)).toContain("failed to load .claude/claude-tools-runner.yaml");
         // The failing layer must NOT have a config_load entry; only the home layer (which loaded fine) gets one.
-        const projectConfigLoadEntries = entries.filter(entry => entry.type === "config_load" && entry.filePath === ".claude/tools-runner.yaml");
+        const projectConfigLoadEntries = entries.filter(entry => entry.type === "config_load" && entry.filePath === ".claude/claude-tools-runner.yaml");
         expect(projectConfigLoadEntries).toHaveLength(0);
     });
 });

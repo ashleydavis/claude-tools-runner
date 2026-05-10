@@ -43,9 +43,9 @@ describe("toLocalISOString", () => {
 });
 
 describe("resolveLogBaseDir", () => {
-    test("returns <projectDir>/.claude/tools-runner-log", () => {
+    test("returns <scopeDir>/.claude/claude-tools-runner/log", () => {
         const result = resolveLogBaseDir("/tmp/myproject");
-        expect(result).toBe(path.join("/tmp/myproject", ".claude", "tools-runner-log"));
+        expect(result).toBe(path.join("/tmp/myproject", ".claude", "claude-tools-runner", "log"));
     });
 });
 
@@ -106,28 +106,34 @@ describe("renderEntryBody", () => {
         expect(body).toBe("started cwd=/tmp/proj stop_hook_active=false");
     });
 
-    test("config_load body includes file path and trigger count", () => {
+    test("config_load body includes file path, trigger count, and the layer's state/log paths", () => {
         const body = renderEntryBody({
             type: "config_load",
             timestamp: "2026-05-09T14:30:15.123+10:00",
-            filePath: ".claude/tools-runner.yaml",
+            filePath: ".claude/claude-tools-runner.yaml",
             triggerCount: 2,
+            hashesPath: "/tmp/p/.claude/claude-tools-runner/hashes.yaml",
+            runsDir: "/tmp/p/.claude/claude-tools-runner/runs",
+            logBaseDir: "/tmp/p/.claude/claude-tools-runner/log",
         });
-        expect(body).toBe(".claude/tools-runner.yaml (2 triggers)");
+        expect(body).toContain(".claude/claude-tools-runner.yaml (2 triggers)");
+        expect(body).toContain("state=/tmp/p/.claude/claude-tools-runner/hashes.yaml");
+        expect(body).toContain("runs=/tmp/p/.claude/claude-tools-runner/runs");
+        expect(body).toContain("log=/tmp/p/.claude/claude-tools-runner/log");
     });
 
     test("trigger_match body uses sourceFile:sourceLine prefix and matched/total fraction", () => {
         const body = renderEntryBody({
             type: "trigger_match",
             timestamp: "2026-05-09T14:30:15.123+10:00",
-            sourceFile: ".claude/tools-runner.yaml",
+            sourceFile: ".claude/claude-tools-runner.yaml",
             sourceLine: 4,
             triggerIndex: 0,
             patterns: ["src/**/*.ts"],
             matchedFiles: ["src/a.ts"],
             unmatchedFiles: ["docs/x.md"],
         });
-        expect(body).toContain(".claude/tools-runner.yaml:4");
+        expect(body).toContain(".claude/claude-tools-runner.yaml:4");
         expect(body).toContain("matched=1/2");
     });
 
@@ -135,14 +141,14 @@ describe("renderEntryBody", () => {
         const body = renderEntryBody({
             type: "trigger_match",
             timestamp: "2026-05-09T14:30:15.123+10:00",
-            sourceFile: ".claude/tools-runner.yaml",
+            sourceFile: ".claude/claude-tools-runner.yaml",
             sourceLine: 9,
             triggerIndex: 1,
             patterns: ["**/*.go"],
             matchedFiles: [],
             unmatchedFiles: ["src/a.ts"],
         });
-        expect(body).toContain(".claude/tools-runner.yaml:9");
+        expect(body).toContain(".claude/claude-tools-runner.yaml:9");
         expect(body).toContain("matched=0/1");
     });
 
@@ -386,6 +392,9 @@ describe("FileAuditLogger.log", () => {
             timestamp: "2026-05-09T14:30:15.123+10:00",
             filePath: "a.yaml",
             triggerCount: 1,
+            hashesPath: "/tmp/p/.claude/claude-tools-runner/hashes.yaml",
+            runsDir: "/tmp/p/.claude/claude-tools-runner/runs",
+            logBaseDir: "/tmp/p/.claude/claude-tools-runner/log",
         };
         await logger.log(baseEntry);
         await logger.log({ ...baseEntry, filePath: "b.yaml", triggerCount: 2 });
@@ -411,6 +420,9 @@ describe("FileAuditLogger.log", () => {
                 timestamp: "2026-05-09T14:30:15.123+10:00",
                 filePath: `layer-${logIndex}.yaml`,
                 triggerCount: logIndex,
+                hashesPath: `/tmp/p${logIndex}/.claude/claude-tools-runner/hashes.yaml`,
+                runsDir: `/tmp/p${logIndex}/.claude/claude-tools-runner/runs`,
+                logBaseDir: `/tmp/p${logIndex}/.claude/claude-tools-runner/log`,
             }));
         }
         await Promise.all(tasks);
@@ -475,30 +487,28 @@ describe("createLogger", () => {
         await fs.rm(tempProjectDir, { recursive: true, force: true });
     });
 
-    test("returns a FileAuditLogger rooted at <projectDir>/.claude/tools-runner-log", async () => {
+    test("returns a FileAuditLogger rooted at <scopeDir>/.claude/claude-tools-runner/log", async () => {
         const fixedNow = new Date(2026, 4, 9, 14, 30, 15, 123);
         const logger = await createLogger(tempProjectDir, fixedNow);
         expect(logger).toBeInstanceOf(FileAuditLogger);
-        expect(logger.baseDir).toBe(path.join(tempProjectDir, ".claude", "tools-runner-log"));
+        expect(logger.baseDir).toBe(path.join(tempProjectDir, ".claude", "claude-tools-runner", "log"));
         expect(logger.now).toBe(fixedNow);
     });
 
     test("runs cleanupOldMonths so stale month directories are gone before the first log entry", async () => {
-        const baseDir = path.join(tempProjectDir, ".claude", "tools-runner-log");
+        const baseDir = path.join(tempProjectDir, ".claude", "claude-tools-runner", "log");
         await fs.mkdir(path.join(baseDir, "2025-01"), { recursive: true });
         await fs.mkdir(path.join(baseDir, "2026-05"), { recursive: true });
         const fixedNow = new Date(2026, 4, 9, 14, 30, 15, 123);
         await createLogger(tempProjectDir, fixedNow);
         const remaining = await fs.readdir(baseDir);
-        // `.gitignore` is created by createLogger so the audit-log dir stays invisible to git status.
-        const monthEntries = remaining.filter(entry => entry !== ".gitignore");
-        expect(monthEntries.slice().sort()).toEqual(["2026-05"]);
+        expect(remaining.slice().sort()).toEqual(["2026-05"]);
     });
 
-    test("drops a `.gitignore` containing `*` at the audit-log root so git ignores audit writes", async () => {
+    test("drops a `.gitignore` containing `*` at the claude-tools-runner root so git ignores plugin output", async () => {
         const fixedNow = new Date(2026, 4, 9, 14, 30, 15, 123);
         await createLogger(tempProjectDir, fixedNow);
-        const gitignorePath = path.join(tempProjectDir, ".claude", "tools-runner-log", ".gitignore");
+        const gitignorePath = path.join(tempProjectDir, ".claude", "claude-tools-runner", ".gitignore");
         const text = await fs.readFile(gitignorePath, "utf8");
         expect(text).toBe("*\n");
     });

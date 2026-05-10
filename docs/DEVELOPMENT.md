@@ -73,14 +73,14 @@ bun run test:all   # unit + hook-smoke + smoke
 
 ### Inspecting the audit log
 
-Every Stop event writes a structured audit log to `<project>/.claude/tools-runner-log/YYYY-MM/DD/HH.{json,log}` (machine-readable JSON Lines plus a human-readable mirror). When debugging "why didn't my command fire?", inspect the most recent files:
+Every Stop event writes a structured audit log per configuration layer to `<scopeDir>/.claude/claude-tools-runner/log/YYYY-MM/DD/HH.{json,log}` (machine-readable JSON Lines plus a human-readable mirror). When debugging "why didn't my command fire?", inspect the most recent files:
 
 ```bash
-# Tail the most recent hour's text log (any project under cwd):
-ls -t .claude/tools-runner-log/**/*.log | head -1 | xargs tail -f
+# Tail the most recent hour's text log under the project tree:
+ls -t .claude/claude-tools-runner/log/**/*.log | head -1 | xargs tail -f
 
 # Filter the JSON log for one event type (e.g. trigger_match):
-jq 'select(.type == "trigger_match")' .claude/tools-runner-log/**/*.json
+jq 'select(.type == "trigger_match")' .claude/claude-tools-runner/log/**/*.json
 ```
 
 See [AUDIT-LOG.md](AUDIT-LOG.md) for the full entry-type reference and more `jq` recipes.
@@ -93,10 +93,10 @@ To publish a new version, bump the `version` in `plugin/.claude-plugin/plugin.js
 
 ## Troubleshooting
 
-**Where is the state file?** `<project>/.claude/tools-runner-state.yaml`. It's gitignored. To reset all cooldown state for a project, delete it; the next Stop event recreates it from scratch.
+**Where is the state file?** Each configuration layer keeps its state in `<scopeDir>/.claude/claude-tools-runner/`: `hashes.yaml` for the hash cache and `runs/<commandKey>.yaml` for one file per known command. The whole `claude-tools-runner/` directory is gitignored. To reset cooldown state for a layer, delete its `runs/` directory and `hashes.yaml` (or the entire `claude-tools-runner/` directory); the next Stop event recreates it from scratch. State for nested configurations is independent: deleting one layer's state leaves the other layers untouched.
 
 **How do I see what the hook is doing?** Routine progress goes to stdout, errors to stderr. Both streams appear in Claude Code's hook output panel. Every prepared command logs a `PASS`, `FAIL`, or `SKIP` line, followed by a final summary.
 
 **A command keeps re-running on every Stop event.** Either the matched files are genuinely changing (check `git status --porcelain`) or the command is exiting non-zero (failures don't update `lastFilesHash`, so the next Stop sees no recorded hash and runs again). Check the `FAIL` log line for the exit code.
 
-**A command never runs even though my YAML looks right.** Most likely causes, in order: the file isn't actually showing in `git status --porcelain` (untracked files need to exist; deletions don't count); your glob doesn't match the scope-relative POSIX path (relative to the config file's directory); the YAML failed to parse and the layer was treated as empty (look for `[tools-runner] failed to load <sourceFile>` on stderr). Set `cooldown: 0` and delete `.claude/tools-runner-state.yaml` to rule out gating.
+**A command never runs even though my YAML looks right.** Most likely causes, in order: the file isn't actually showing in `git status --porcelain` (untracked files need to exist; deletions don't count); your glob doesn't match the scope-relative POSIX path (relative to the config file's directory); the YAML failed to parse and the layer was treated as empty (look for `[tools-runner] failed to load <sourceFile>` on stderr). Set `cooldown: 0` and delete the layer's `.claude/claude-tools-runner/` directory to rule out gating.

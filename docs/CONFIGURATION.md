@@ -1,13 +1,15 @@
 # Configuration
 
-How to write `tools-runner.yaml` files.
+How to write `claude-tools-runner.yaml` files.
 
 ## Configuration files
 
 All locations are optional. If multiple exist, their triggers all run.
 
-- `~/.claude/tools-runner.yaml`: **home config**. Applies to every project you open with Claude Code. Useful for editor-style triggers (formatters, linters) you want everywhere.
-- Any `.claude/tools-runner.yaml` found by scanning downward from `$CLAUDE_PROJECT_DIR`: each such file's triggers apply only to files within that file's own directory and below.
+- `~/.claude/claude-tools-runner.yaml`: **home config**. Applies to every project you open with Claude Code. Useful for editor-style triggers (formatters, linters) you want everywhere.
+- Any `.claude/claude-tools-runner.yaml` found by scanning downward from `$CLAUDE_PROJECT_DIR`: each such file's triggers apply only to files within that file's own directory and below.
+
+Each configuration file gets its own state and output directory, sitting next to it as `.claude/claude-tools-runner/`. Inside it the plugin writes `hashes.yaml`, `runs/<commandKey>.yaml` (one file per command), and `log/YYYY-MM/DD/HH.{json,log}` (audit log) plus `log/YYYY-MM/DD/HH/<MM-SS-…>.log` (per-command stdout/stderr capture). The whole `claude-tools-runner/` directory is gitignored automatically by a `.gitignore` containing `*` that the plugin drops at the directory root. Nested repos with their own configuration each get isolated state so a hook run in the parent never overwrites the nested repo's hashes or run history.
 
 ## Schema reference
 
@@ -38,7 +40,7 @@ A trigger needs at least one path pattern and one command, and every command nee
 
 ## Variables
 
-In your `tools-runner.yaml` config file, you can write `${{name}}`-style variables into certain fields and they'll be replaced with real values when a trigger fires. For example:
+In your `claude-tools-runner.yaml` config file, you can write `${{name}}`-style variables into certain fields and they'll be replaced with real values when a trigger fires. For example:
 
 ```yaml
 triggers:
@@ -104,7 +106,7 @@ How variables decide the number of invocations of a command (finest-granularity 
 ### 1. Project-level: run tests when TS files change
 
 ```yaml
-# <project>/.claude/tools-runner.yaml
+# <project>/.claude/claude-tools-runner.yaml
 triggers:
   - paths:
       - src/**/*.ts
@@ -142,7 +144,7 @@ triggers:
 
 ### 4. Home + project, layered
 
-`~/.claude/tools-runner.yaml`:
+`~/.claude/claude-tools-runner.yaml`:
 
 ```yaml
 triggers:
@@ -152,7 +154,7 @@ triggers:
       - run: prettier --check ${{file_path}}
 ```
 
-`<project>/.claude/tools-runner.yaml`:
+`<project>/.claude/claude-tools-runner.yaml`:
 
 ```yaml
 triggers:
@@ -166,17 +168,17 @@ Inside this project both triggers run: a generic per-file `prettier --check` (fr
 
 ## Troubleshooting
 
-**Audit log: the canonical record of every Stop event.** Every invocation writes a sequence of structured entries to `<project>/.claude/tools-runner-log/YYYY-MM/DD/HH.log` (plain text, human-readable) and `HH.json` (JSON Lines, machine-readable). Entry types include `hook_started`, `config_load`, `changed_files`, `trigger_match` (per trigger, with both **matched** and **unmatched** file lists), `gate_decision` (per command, with the cooldown/hash reasoning), `command_started`, `command_result`, `state_saved`, and `hook_completed`. **If a trigger isn't firing, this is where to look first**: the `trigger_match` entry for it shows exactly which files matched its `paths` patterns and which didn't. Every trigger-scoped entry is prefixed with `<sourceFile>:<sourceLine>` (the YAML file path and the line where that trigger begins), so you can jump straight from a log line to the line in your `tools-runner.yaml` that produced it.
+**Audit log: the canonical record of every Stop event.** Each configuration layer writes its own audit log under that layer's `.claude/claude-tools-runner/log/YYYY-MM/DD/HH.log` (plain text, human-readable) and `HH.json` (JSON Lines, machine-readable). Entry types include `hook_started`, `config_load` (which records the layer's `state`, `runs`, and `log` paths so you can see at a glance where this config writes its files), `changed_files`, `trigger_match` (per trigger, with both **matched** and **unmatched** file lists), `gate_decision` (per command, with the cooldown/hash reasoning), `command_started`, `command_result`, `state_saved`, and `hook_completed`. **If a trigger isn't firing, this is where to look first**: the `trigger_match` entry for it shows exactly which files matched its `paths` patterns and which didn't. Every trigger-scoped entry is prefixed with `<sourceFile>:<sourceLine>` (the YAML file path and the line where that trigger begins), so you can jump straight from a log line to the line in your `claude-tools-runner.yaml` that produced it. Layer-specific entries (`config_load`, `trigger_match`, `gate_decision`, `command_started`, `command_result`, `state_saved`) are routed only to the originating layer's log; global entries (`hook_started`, `changed_files`, `hook_completed`, `hook_error`) fan out to every layer's log so each file is self-contained.
 
-**Per-command output log.** Every spawned command's stdout and stderr are captured to a per-command file at `<project>/.claude/tools-runner-log/YYYY-MM/DD/HH/<MM-SS-…>.log`, sitting next to the audit log. Inside the file, every output line is prefixed with `[OUT] ` if it came from stdout or `[ERR] ` if it came from stderr, so you can tell the streams apart while still seeing them in the order they were produced. Each `command_started` and `command_result` audit entry carries a `logFile` field pointing at the file, so you can jump from "this command failed at 14:30" in the audit log to its full output without searching. When a command fails, that file is where the actual error message lives.
+**Per-command output log.** Every spawned command's stdout and stderr are captured to a per-command file at `<scopeDir>/.claude/claude-tools-runner/log/YYYY-MM/DD/HH/<MM-SS-…>.log` (where `<scopeDir>` is the directory of the configuration file that produced the command), sitting next to that layer's audit log. Inside the file, every output line is prefixed with `[OUT] ` if it came from stdout or `[ERR] ` if it came from stderr, so you can tell the streams apart while still seeing them in the order they were produced. Each `command_started` and `command_result` audit entry carries a `logFile` field pointing at the file, so you can jump from "this command failed at 14:30" in the audit log to its full output without searching. When a command fails, that file is where the actual error message lives.
 
 **Stdout summary.** Alongside the audit log, the hook also writes a one-line summary per command to stdout (visible in Claude Code's hook output panel): `PASS`, `SKIP <reason>`, or `FAIL <reason>`: and a final `[tools-runner] summary: <p> pass, <f> fail, <s> skip`. Quick-glance signals; the audit log is the deep-dive reference.
 
 **Verifying a trigger matches.** Run `git status --porcelain` in the project. Anything listed there is a candidate. The hook collects both staged and unstaged changes (and untracked files), skips deletions, and follows renames to the destination path. Cross-reference with the `changed_files` and `trigger_match` audit entries for the most recent Stop.
 
-**Resetting state.** To force every trigger to fire on the next Stop event, delete `<project>/.claude/tools-runner-state.yaml`. (See [HOW_IT_WORKS.md](HOW_IT_WORKS.md) for what the state file stores.)
+**Resetting state.** To force every trigger to fire on the next Stop event, delete the layer's `.claude/claude-tools-runner/runs/` directory and `.claude/claude-tools-runner/hashes.yaml` file (or the entire `.claude/claude-tools-runner/` directory; the plugin recreates it on the next run). Each configuration file has its own state directory next to it, so you can reset one nested repo's state without touching the parent. See [HOW_IT_WORKS.md](HOW_IT_WORKS.md) for what those files store.
 
-**Bypassing cooldown for testing.** Set `cooldown: 0s` on the command. The hash gate still applies, so the command will only re-run when the matched files actually change. Combine with the state-file delete above to force every Stop event to re-run.
+**Bypassing cooldown for testing.** Set `cooldown: 0s` on the command. The hash gate still applies, so the command will only re-run when the matched files actually change. Combine with the state delete above to force every Stop event to re-run.
 
 **`bun` not on `$PATH`.** If `bun` is not installed, the Stop hook silently fails to start (the shell can't `exec` it). Either install Bun or remove the hook line from `~/.claude/settings.json` / `plugin/hooks/hooks.json`. For *user-configured* commands that use `bun` (e.g. `bun run test`), a missing `bun` causes `sh -c` to exit 127, which the hook treats identically to any other non-zero exit (`FAIL exit 127`).
 

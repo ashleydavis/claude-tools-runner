@@ -22,7 +22,7 @@ const DEFAULT_COOLDOWN_SECONDS: number = 60;
 // Default timeout applied to a command when its YAML omits `timeout`. Stored as integer seconds (5 minutes).
 const DEFAULT_TIMEOUT_SECONDS: number = 300;
 
-// Loads and validates a single `tools-runner.yaml` file.
+// Loads and validates a single `claude-tools-runner.yaml` file.
 //
 // Returns null if the file does not exist (ENOENT). Throws on YAML parse errors, schema validation errors,
 // or duration parse errors. Empty documents and documents with `triggers: []` are accepted and yield
@@ -84,7 +84,7 @@ export async function loadConfigFile(filePath: string): Promise<Config | null> {
     return { triggers };
 }
 
-// Recursively walks `projectDir` and returns absolute paths to every `.claude/tools-runner.yaml` file found.
+// Recursively walks `projectDir` and returns absolute paths to every `.claude/claude-tools-runner.yaml` file found.
 // Skips `node_modules/`, `.git/`, `.cache/`, and any directory whose name starts with `.` other than `.claude`.
 // The returned list is sorted lexicographically so the discovery order is deterministic across runs.
 export async function scanConfigFiles(projectDir: string): Promise<string[]> {
@@ -94,22 +94,22 @@ export async function scanConfigFiles(projectDir: string): Promise<string[]> {
     return results;
 }
 
-// Returns the absolute path to the home-level `tools-runner.yaml`, or null if `$HOME` is unset.
+// Returns the absolute path to the home-level `claude-tools-runner.yaml`, or null if `$HOME` is unset.
 // The home layer is loaded before any per-project layers so home-level triggers always run first.
 export function homeConfigPath(): string | null {
     const homeDir = process.env["HOME"];
     if (!homeDir) {
         return null;
     }
-    return path.join(homeDir, ".claude", "tools-runner.yaml");
+    return path.join(homeDir, ".claude", "claude-tools-runner.yaml");
 }
 
-// Static display path for the home-level `tools-runner.yaml` used in log output and as the `sourceFile`
+// Static display path for the home-level `claude-tools-runner.yaml` used in log output and as the `sourceFile`
 // field of the home `FileLayer`. The literal `~` is preserved (not expanded) so log lines remain anchored
 // at a stable, user-recognisable string irrespective of the actual `$HOME` value.
-export const HOME_DISPLAY_PATH: string = "~/.claude/tools-runner.yaml";
+export const HOME_DISPLAY_PATH: string = "~/.claude/claude-tools-runner.yaml";
 
-// Walks one directory, recording any `.claude/tools-runner.yaml` it contains and recursing into eligible subdirectories.
+// Walks one directory, recording any `.claude/claude-tools-runner.yaml` it contains and recursing into eligible subdirectories.
 // `results` is mutated in place. Subdirectory names are filtered by `shouldRecurseInto` before recursion.
 export async function scanDirectoryRecursive(currentDir: string, results: string[]): Promise<void> {
     const entries = await fs.readdir(currentDir, { withFileTypes: true });
@@ -119,7 +119,7 @@ export async function scanDirectoryRecursive(currentDir: string, results: string
         }
         const dirName = entry.name;
         if (dirName === ".claude") {
-            const candidatePath = path.join(currentDir, ".claude", "tools-runner.yaml");
+            const candidatePath = path.join(currentDir, ".claude", "claude-tools-runner.yaml");
             try {
                 const candidateStat = await fs.stat(candidatePath);
                 if (candidateStat.isFile()) {
