@@ -1,0 +1,71 @@
+description: "first run, cooldown skip, cooldown bypass via file change, clean slate after state delete"
+
+setup:
+  git_init:
+    - "."
+  files:
+    .claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "src/**/*.ts"
+          commands:
+            - run: "echo SMOKE_OK > smoke.out"
+    src/foo.ts: ""
+
+steps:
+  - description: "first-run executes"
+    expect:
+      exit: 0
+      stdout_regex:
+        - "trigger 0 cmd 0.*PASS"
+      file_contains:
+        - path: smoke.out
+          substring: SMOKE_OK
+
+  - description: "cooldown skip on immediate re-run"
+    pre:
+      capture_mtime:
+        smoke_before_step2: smoke.out
+    expect:
+      exit: 0
+      stdout_substrings:
+        - "in cooldown"
+      mtime_unchanged:
+        - path: smoke.out
+          slot: smoke_before_step2
+
+  - description: "cooldown bypass via file change"
+    pre:
+      sleep: 1.1
+      write:
+        .claude/claude-tools-runner.yaml: |
+          triggers:
+            - paths:
+                - "src/**/*.ts"
+              commands:
+                - run: "echo SMOKE_OK > smoke.out"
+                  cooldown: "0s"
+      append:
+        src/foo.ts: "// changed\n"
+      capture_mtime:
+        smoke_before_step3: smoke.out
+    expect:
+      exit: 0
+      mtime_advanced:
+        - path: smoke.out
+          slot: smoke_before_step3
+
+  - description: "clean-slate after state delete"
+    pre:
+      sleep: 1.1
+      delete:
+        - .claude/claude-tools-runner/hashes.yaml
+      delete_recursive:
+        - .claude/claude-tools-runner/runs
+      capture_mtime:
+        smoke_before_step4: smoke.out
+    expect:
+      exit: 0
+      mtime_advanced:
+        - path: smoke.out
+          slot: smoke_before_step4

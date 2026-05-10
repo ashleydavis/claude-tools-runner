@@ -1,0 +1,34 @@
+description: "layered config (home + project)"
+
+setup:
+  git_init:
+    - "."
+  files:
+    .claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "**/*.txt"
+          commands:
+            - run: "echo PROJECT_OK > project.out"
+    foo.txt: ""
+  home_files:
+    .claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "**/*.txt"
+          commands:
+            - run: "echo HOME_OK > home.out"
+
+steps:
+  - description: "home and project layers both fire and write to their own roots"
+    expect:
+      exit: 0
+      stdout_substrings:
+        - "~/.claude/claude-tools-runner.yaml:trigger"
+      stdout_regex:
+        - "^\\[tools-runner\\] \\.claude/claude-tools-runner\\.yaml:trigger"
+      file_contains:
+        - path: ${HOME_DIR}/home.out
+          substring: HOME_OK
+        - path: project.out
+          substring: PROJECT_OK

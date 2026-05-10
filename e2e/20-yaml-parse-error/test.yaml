@@ -1,0 +1,15 @@
+description: "malformed YAML in project config exits 1"
+
+setup:
+  git_init:
+    - "."
+  files:
+    .claude/claude-tools-runner.yaml: |
+      triggers: [ { paths: ["**/*.ts"], commands: [
+
+steps:
+  - description: "hook exits 1 with the catalog stderr message"
+    expect:
+      exit: 1
+      stderr_substrings:
+        - "[tools-runner] failed to load .claude/claude-tools-runner.yaml:"

@@ -1,0 +1,57 @@
+description: "parent project, two nested repos, three configs: each gets its own state directory"
+
+setup:
+  git_init:
+    - repoA
+    - repoB
+  files:
+    repoA/.claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "**/*.ts"
+          commands:
+            - run: "echo A > '${{project}}/a-fired.txt'"
+              cooldown: "0s"
+    repoA/sub/.claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "**/*.ts"
+          commands:
+            - run: "echo SUB > '${{project}}/sub-fired.txt'"
+              cooldown: "0s"
+    repoB/.claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "**/*.ts"
+          commands:
+            - run: "echo B > '${{project}}/b-fired.txt'"
+              cooldown: "0s"
+    repoA/foo.ts: ""
+    repoA/sub/sub-foo.ts: ""
+    repoB/foo.ts: ""
+
+steps:
+  - description: "all three layers fire; each gets isolated state; parent has none"
+    expect:
+      exit: 0
+      stdout_substrings:
+        - "summary: 3 pass, 0 fail"
+      file_exists:
+        - repoA/a-fired.txt
+        - repoA/sub/sub-fired.txt
+        - repoB/b-fired.txt
+        - repoA/.claude/claude-tools-runner/hashes.yaml
+        - repoA/sub/.claude/claude-tools-runner/hashes.yaml
+        - repoB/.claude/claude-tools-runner/hashes.yaml
+      dir_exists:
+        - repoA/.claude/claude-tools-runner
+        - repoA/.claude/claude-tools-runner/runs
+        - repoA/.claude/claude-tools-runner/log
+        - repoA/sub/.claude/claude-tools-runner
+        - repoA/sub/.claude/claude-tools-runner/runs
+        - repoA/sub/.claude/claude-tools-runner/log
+        - repoB/.claude/claude-tools-runner
+        - repoB/.claude/claude-tools-runner/runs
+        - repoB/.claude/claude-tools-runner/log
+      dir_not_exists:
+        - .claude/claude-tools-runner

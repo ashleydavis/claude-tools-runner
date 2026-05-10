@@ -1,0 +1,22 @@
+description: "no matching files reports 'no triggers matched, skipping'"
+
+setup:
+  git_init:
+    - "."
+  files:
+    .claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "**/*.foo"
+          commands:
+            - run: "echo NEVER > never.out"
+    bar.txt: ""
+
+steps:
+  - description: "stdout announces skip; no command runs"
+    expect:
+      exit: 0
+      stdout_substrings:
+        - "[tools-runner] no triggers matched, skipping"
+      file_not_exists:
+        - never.out

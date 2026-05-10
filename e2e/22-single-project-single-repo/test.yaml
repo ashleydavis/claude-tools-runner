@@ -1,0 +1,33 @@
+description: "single project, single repo, one config: per-config state under .claude/claude-tools-runner/"
+
+setup:
+  git_init:
+    - "."
+  files:
+    .claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "src/**/*.ts"
+          commands:
+            - run: "echo SOLO > solo.out"
+              cooldown: "0s"
+    src/foo.ts: ""
+
+steps:
+  - description: "state, runs, log, gitignore all created next to the config; audit log announces hashes path"
+    expect:
+      exit: 0
+      file_exists:
+        - solo.out
+        - .claude/claude-tools-runner/hashes.yaml
+        - .claude/claude-tools-runner/.gitignore
+      dir_exists:
+        - .claude/claude-tools-runner
+        - .claude/claude-tools-runner/runs
+        - .claude/claude-tools-runner/log
+      find_file_contains:
+        - search_dir: .claude/claude-tools-runner/log
+          pattern: "*.json"
+          min_depth: 0
+          substrings:
+            - '"hashesPath":"${PROJECT_DIR}/.claude/claude-tools-runner/hashes.yaml"'

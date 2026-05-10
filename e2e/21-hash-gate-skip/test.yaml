@@ -1,0 +1,36 @@
+description: "hash gate: skip after cooldown when files unchanged"
+
+setup:
+  git_init:
+    - "."
+  files:
+    .claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "**/*.ts"
+          commands:
+            - run: "echo HASH > hash.out"
+              cooldown: "1s"
+    foo.ts: ""
+
+steps:
+  - description: "first run produces hash.out"
+    pre:
+      capture_mtime: {}
+    expect:
+      exit: 0
+      file_exists:
+        - hash.out
+
+  - description: "second run after cooldown but with no file change is hash-gate skipped"
+    pre:
+      sleep: 1.5
+      capture_mtime:
+        hash_before_step2: hash.out
+    expect:
+      exit: 0
+      stdout_substrings:
+        - "no file changes since last successful run"
+      mtime_unchanged:
+        - path: hash.out
+          slot: hash_before_step2

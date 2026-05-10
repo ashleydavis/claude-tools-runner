@@ -1,0 +1,31 @@
+description: "recursive config scan picks up subdirectory YAML"
+
+setup:
+  git_init:
+    - "."
+  files:
+    .claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "root-files/*.txt"
+          commands:
+            - run: "echo ROOT > root.out"
+    sub/.claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "sub-files/*.txt"
+          commands:
+            - run: "echo SUB > sub.out"
+    root-files/foo.txt: ""
+    sub/sub-files/bar.txt: ""
+
+steps:
+  - description: "both root and subdirectory configs fire; display paths announce both layers"
+    expect:
+      exit: 0
+      file_exists:
+        - root.out
+        - sub/sub.out
+      stdout_regex:
+        - "^\\[tools-runner\\] \\.claude/claude-tools-runner\\.yaml:trigger"
+        - "^\\[tools-runner\\] sub/\\.claude/claude-tools-runner\\.yaml:trigger"

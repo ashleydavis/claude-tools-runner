@@ -1,0 +1,25 @@
+description: "per-command log file captures stdout and stderr"
+
+setup:
+  git_init:
+    - "."
+  files:
+    .claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "**/*.ts"
+          commands:
+            - run: "echo HELLO_FROM_HOOK; echo BYE_STDERR 1>&2"
+    foo.ts: ""
+
+steps:
+  - description: "log file under .claude/claude-tools-runner/log/<YYYY-MM>/<DD>/<HH>/ contains [OUT] and [ERR] lines"
+    expect:
+      exit: 0
+      find_file_contains:
+        - search_dir: .claude/claude-tools-runner/log
+          pattern: "*.log"
+          min_depth: 3
+          substrings:
+            - "[OUT] HELLO_FROM_HOOK"
+            - "[ERR] BYE_STDERR"

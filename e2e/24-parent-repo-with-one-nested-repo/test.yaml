@@ -1,0 +1,48 @@
+description: "parent repo with one nested repo, two configs: state isolated per config"
+
+setup:
+  git_init:
+    - "."
+    - nested
+  files:
+    .claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "*.ts"
+          commands:
+            - run: "echo PARENT > '${{project}}/parent-fired.txt'"
+              cooldown: "0s"
+    nested/.claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "**/*.ts"
+          commands:
+            - run: "echo NESTED > '${{project}}/nested-fired.txt'"
+              cooldown: "0s"
+    parent.ts: ""
+    nested/foo.ts: ""
+
+steps:
+  - description: "both layers fire; each layer has exactly one run file; nested run does not leak to parent"
+    expect:
+      exit: 0
+      stdout_substrings:
+        - "summary: 2 pass, 0 fail"
+      file_exists:
+        - parent-fired.txt
+        - nested/nested-fired.txt
+        - .claude/claude-tools-runner/hashes.yaml
+        - nested/.claude/claude-tools-runner/hashes.yaml
+      find_count:
+        - search_dir: .claude/claude-tools-runner/runs
+          pattern: "*.yaml"
+          max_depth: 1
+          count: 1
+        - search_dir: nested/.claude/claude-tools-runner/runs
+          pattern: "*.yaml"
+          max_depth: 1
+          count: 1
+      no_files_overlap:
+        - dir_a: nested/.claude/claude-tools-runner/runs
+          dir_b: .claude/claude-tools-runner/runs
+          pattern: "*.yaml"

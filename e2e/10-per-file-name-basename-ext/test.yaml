@@ -1,0 +1,21 @@
+description: "per-file ${{file_name}}/${{file_basename}}/${{file_ext}} expansion"
+
+setup:
+  git_init:
+    - "."
+  files:
+    .claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "**/*.txt"
+          commands:
+            - run: "echo NAME=${{file_name}} BASE=${{file_basename}} EXT=${{file_ext}} > info-${{file_basename}}.out"
+    hello.txt: ""
+
+steps:
+  - description: "file_name, file_basename, file_ext all substituted"
+    expect:
+      exit: 0
+      file_contains:
+        - path: info-hello.out
+          substring: "NAME=hello.txt BASE=hello EXT=.txt"

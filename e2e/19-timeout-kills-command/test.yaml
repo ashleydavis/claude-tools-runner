@@ -1,0 +1,21 @@
+description: "per-command timeout kills the process and surfaces FAIL timeout"
+
+setup:
+  git_init:
+    - "."
+  files:
+    .claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "**/*.ts"
+          commands:
+            - run: "sleep 5"
+              timeout: "1s"
+    foo.ts: ""
+
+steps:
+  - description: "stdout reports 'FAIL timeout'"
+    expect:
+      exit: 0
+      stdout_substrings:
+        - "FAIL timeout"

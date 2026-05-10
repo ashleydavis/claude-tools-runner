@@ -1,0 +1,21 @@
+description: "failing command surfaces FAIL but does not break the hook"
+
+setup:
+  git_init:
+    - "."
+  files:
+    .claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "**/*.ts"
+          commands:
+            - run: "exit 7"
+    foo.ts: ""
+
+steps:
+  - description: "hook exits 0; stdout reports FAIL exit 7 and 1 fail in summary"
+    expect:
+      exit: 0
+      stdout_substrings:
+        - "FAIL exit 7"
+        - "summary: 0 pass, 1 fail, 0 skip"

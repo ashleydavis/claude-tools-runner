@@ -1,0 +1,19 @@
+description: "state file shape: hashes.yaml + runs/*.yaml round-trip and contain required fields"
+
+setup:
+  git_init:
+    - "."
+  files:
+    .claude/claude-tools-runner.yaml: |
+      triggers:
+        - paths:
+            - "src/**/*.ts"
+          commands:
+            - run: "echo SMOKE_OK > smoke.out"
+    src/foo.ts: ""
+
+steps:
+  - description: "hashes.yaml + runs/*.yaml conform to expected schema"
+    expect:
+      exit: 0
+      state_file_shape: true
