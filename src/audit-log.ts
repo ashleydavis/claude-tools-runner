@@ -310,11 +310,11 @@ export function resolveCommandLogDir(baseDir: string, now: Date): string {
 }
 
 // Renders `entry` as a single human-readable line for the `.log` companion of the JSON audit log. Returns
-// `null` for entry variants that exist only in the JSON log (`hook_started`, `config_load`, `changed_files`,
-// `trigger_match`, `command_started`, `state_saved`, `hook_completed`); callers must skip the text append in
-// that case. The format is `HH:MM:SS  LABEL  <details>`; labels are short outcome words so a reader does
-// not need to learn internal stage names. `<sourceFile>:<sourceLine>` prefixes are formatted like
-// editor-jump locations and point at the command's `run:` line for command-level entries.
+// `null` for entry variants that exist only in the JSON log (`hook_started`, `gate_decision`, `state_saved`,
+// `hook_completed`); callers must skip the text append in that case. The format is
+// `HH:MM:SS  LABEL  <details>`; the surfaced labels match the user-facing audit-log spec
+// (CONFIG, CHANGE, MATCH, CMD, PASS, FAIL, TIMEOUT, ERROR). `<sourceFile>:<sourceLine>` prefixes are
+// formatted like editor-jump locations and point at the command's `run:` line for command-level entries.
 export function formatTextEntry(entry: IAuditLogEntry): string | null {
     const body = renderEntryBody(entry);
     if (body === null) {
@@ -325,14 +325,24 @@ export function formatTextEntry(entry: IAuditLogEntry): string | null {
     return `${timeOnly}  ${label}${body}`;
 }
 
-// Returns the column label for `entry`. The labels describe what happened (RUN, SKIP, PASS, FAIL, TIMEOUT,
-// ERROR) rather than which internal stage emitted the entry, so a reader can interpret the log without
-// learning the codebase's vocabulary. Returns the entry's raw type uppercased for variants that do not
-// surface in the text log; those callers should never reach this function because `formatTextEntry`
-// short-circuits on them.
+// Returns the column label for `entry`. The labels are the user-facing audit-log spec:
+// CONFIG (a config file was loaded), CHANGE (the changed-file scan), MATCH (per-trigger match results),
+// CMD (a command was spawned), PASS / FAIL / TIMEOUT (a command exited or timed out, branched by outcome
+// so the end-of-command line is greppable), ERROR (a fatal hook error). `gate_decision`, `hook_started`,
+// `state_saved`, and `hook_completed` exist in the JSON log only and `formatTextEntry` short-circuits on
+// them, so callers should not see this function asked to label them.
 export function labelFor(entry: IAuditLogEntry): string {
-    if (entry.type === "gate_decision") {
-        return entry.decision === "run" ? "RUN" : "SKIP";
+    if (entry.type === "config_load") {
+        return "CONFIG";
+    }
+    if (entry.type === "changed_files") {
+        return "CHANGE";
+    }
+    if (entry.type === "trigger_match") {
+        return "MATCH";
+    }
+    if (entry.type === "command_started") {
+        return "CMD";
     }
     if (entry.type === "command_result") {
         if (entry.outcome === "pass") {
@@ -349,21 +359,55 @@ export function labelFor(entry: IAuditLogEntry): string {
     return entry.type.toUpperCase();
 }
 
+// Maximum number of characters of file-list content to inline in the human-readable text log. Longer
+// lists are truncated with an ellipsis; the JSON log always carries the full list so truncation only
+// affects readability, not auditability.
+const FILE_LIST_TEXT_BUDGET: number = 200;
+
+// Truncates `fullList` to at most `FILE_LIST_TEXT_BUDGET` characters with a trailing ellipsis when it
+// exceeds the budget. Used by `FILE` and `MATCH` lines so a Stop event affecting hundreds of files does
+// not produce a single multi-kilobyte text-log line.
+function truncateFileList(fullList: string): string {
+    if (fullList.length > FILE_LIST_TEXT_BUDGET) {
+        return fullList.slice(0, FILE_LIST_TEXT_BUDGET) + "...";
+    }
+    return fullList;
+}
+
 // Routes `entry` to its variant-specific text renderer. Returns `null` for entries that exist only in the
-// JSON log; the human-readable log keeps just the per-command outcomes (`gate_decision`, `command_result`)
-// and `hook_error`. Layer- and hook-level bookkeeping (`hook_started`, `config_load`, `changed_files`,
-// `trigger_match`, `command_started`, `state_saved`, `hook_completed`) is dropped from the text log
-// because every surviving line already carries a timestamp and a `<file>:<commandLine>` location, and the
-// dropped variants either repeat that information or describe internal plumbing the reader does not need.
+// JSON log; the text log carries the user-facing chain (`config_load` -> `changed_files` -> `trigger_match`
+// -> `command_started` -> `command_result`) plus `hook_error`. `hook_started`, `gate_decision`,
+// `state_saved`, and `hook_completed` are JSON-only because the surfaced lines already convey what the
+// user needs (which configs loaded, which files changed, which triggers matched and on what patterns,
+// what command started, and how it finished including exit code or timeout and duration).
 export function renderEntryBody(entry: IAuditLogEntry): string | null {
-    if (entry.type === "gate_decision") {
-        return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}" ${entry.reason}`;
+    if (entry.type === "config_load") {
+        return entry.filePath;
+    }
+    if (entry.type === "changed_files") {
+        if (entry.count === 0) {
+            return `0 files`;
+        }
+        const fullList = entry.files.map(file => file.path).join(", ");
+        return `${entry.count} files: ${truncateFileList(fullList)}`;
+    }
+    if (entry.type === "trigger_match") {
+        const totalConsidered = entry.matchedFiles.length + entry.unmatchedFiles.length;
+        const patternList = entry.patterns.join(",");
+        if (entry.matchedFiles.length === 0) {
+            return `${entry.sourceFile}:${entry.sourceLine} patterns=${patternList} matched 0/${totalConsidered}`;
+        }
+        const matchedList = entry.matchedFiles.join(", ");
+        return `${entry.sourceFile}:${entry.sourceLine} patterns=${patternList} matched ${entry.matchedFiles.length}/${totalConsidered}: ${truncateFileList(matchedList)}`;
+    }
+    if (entry.type === "command_started") {
+        return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}"`;
     }
     if (entry.type === "command_result") {
-        if (entry.outcome === "pass") {
-            return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}" ${entry.durationMs}ms`;
+        if (entry.outcome === "fail") {
+            return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}" exit=${entry.exitCode} ${entry.durationMs}ms`;
         }
-        return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}" exit=${entry.exitCode} ${entry.durationMs}ms`;
+        return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}" ${entry.durationMs}ms`;
     }
     if (entry.type === "hook_error") {
         return entry.message;

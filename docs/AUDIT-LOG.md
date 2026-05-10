@@ -1,6 +1,6 @@
 # Audit Log
 
-Every Stop event processed by the `claude-tools-runner` plugin is recorded to an audit log. One entry is written for each phase of the hook (config load, changed-file collection, trigger match, gate decision, command spawn, command result, state save), bracketed by `hook_started` and `hook_completed` entries. Together they answer questions like *"why didn't my command fire?"* without instrumenting the plugin yourself.
+Every Stop event processed by the `claude-tools-runner` plugin is recorded to an audit log. The JSON log captures every phase of the hook (config load, changed-file collection, trigger match, gate decision, command spawn, command result, state save) bracketed by `hook_started` and `hook_completed` entries; the human-readable text log keeps only the user-facing chain (`CONFIG` → `CHANGE` → `MATCH` → `CMD` → `PASS`/`FAIL`/`TIMEOUT`) plus `ERROR`. Together they answer questions like *"why didn't my command fire?"* without instrumenting the plugin yourself.
 
 ## Location
 
@@ -53,24 +53,20 @@ All timestamps use ISO 8601 format in local time with timezone offset (e.g. `202
 ### Human-readable example (`.log`)
 
 ```
-14:30:15  HOOK     started cwd=/path/to/project stop_hook_active=false
-14:30:15  CONFIG   ~/.claude/claude-tools-runner.yaml (0 triggers); state=/path/to/home/.claude/claude-tools-runner/hashes.yaml, runs=/path/to/home/.claude/claude-tools-runner/runs, log=/path/to/home/.claude/claude-tools-runner/log
-14:30:15  CONFIG   .claude/claude-tools-runner.yaml (2 triggers); state=/path/to/project/.claude/claude-tools-runner/hashes.yaml, runs=/path/to/project/.claude/claude-tools-runner/runs, log=/path/to/project/.claude/claude-tools-runner/log
-14:30:15  CHANGED  2 file(s): src/foo.ts, src/bar.ts
-14:30:15  MATCH    .claude/claude-tools-runner.yaml:4 patterns=src/**/*.ts matched=2/2
-14:30:15  MATCH    .claude/claude-tools-runner.yaml:12 patterns=docs/**/*.md matched=0/2
-14:30:15  GATE     .claude/claude-tools-runner.yaml:4 cmd=0 RUN: first run
-14:30:15  START    .claude/claude-tools-runner.yaml:4 cmd=0 pid=42891 timeout=300s "bun run test"
-14:30:18  RESULT   .claude/claude-tools-runner.yaml:4 cmd=0 pass exit=0 2873ms
-14:30:18  STATE    .claude/claude-tools-runner.yaml: /path/to/project/.claude/claude-tools-runner/hashes.yaml + /path/to/project/.claude/claude-tools-runner/runs (1 runs, 2 hashes; pruned 0+0)
-14:30:18  DONE     1P / 0F / 0S in 3104ms exit=0
+14:30:15  CONFIG  ~/.claude/claude-tools-runner.yaml
+14:30:15  CONFIG  .claude/claude-tools-runner.yaml
+14:30:15  CHANGE  2 files: src/foo.ts, src/bar.ts
+14:30:15  MATCH   .claude/claude-tools-runner.yaml:4 patterns=src/**/*.ts matched 2/2: src/foo.ts, src/bar.ts
+14:30:15  MATCH   .claude/claude-tools-runner.yaml:12 patterns=docs/**/*.md matched 0/2
+14:30:15  CMD     .claude/claude-tools-runner.yaml:5 "bun run test"
+14:30:18  PASS    .claude/claude-tools-runner.yaml:5 "bun run test" 2873ms
 ```
 
-Columns: `HH:MM:SS`, label (left-padded to 9 chars), then the entry detail. Labels in use: `HOOK`, `CONFIG`, `CHANGED`, `MATCH`, `GATE`, `START`, `RESULT`, `STATE`, `DONE`, `ERROR`.
+Columns: `HH:MM:SS`, label (left-padded to 8 chars), then the entry detail. Labels in use: `CONFIG`, `CHANGE`, `MATCH`, `CMD`, `PASS`, `FAIL`, `TIMEOUT`, `ERROR`. The end-of-command label encodes the outcome — `PASS` for exit 0, `FAIL` for any non-zero exit (with `exit=N` in the body), `TIMEOUT` for a per-command timeout kill — so a quick `grep FAIL` or `grep TIMEOUT` over the log surfaces only the bad runs.
 
-The `<sourceFile>:<sourceLine>` prefix on `MATCH`, `GATE`, `START`, and `RESULT` lines is formatted like an editor-jump location, so most terminals and editors recognise it as a clickable target straight to the trigger in your `claude-tools-runner.yaml`.
+The `<sourceFile>:<sourceLine>` prefix on `MATCH`, `CMD`, `PASS`, `FAIL`, and `TIMEOUT` lines is formatted like an editor-jump location. For `MATCH` it points at the trigger header; for command-level lines it points at the command's `run:` line, so most terminals and editors recognise it as a clickable target straight to the right line in your `claude-tools-runner.yaml`.
 
-For a successful command the full sequence is: `HOOK` → `CONFIG` (one per loaded layer, including the layer's state and log paths so you can see at a glance where the layer's output goes) → `CHANGED` → `MATCH` (one per evaluated trigger, regardless of outcome) → `GATE` (one per compiled command) → `START` → `RESULT` → `STATE` → `DONE`. Skipped commands stop after `GATE`. An aborted hook stops after `ERROR` and may not reach `DONE`.
+For a successful command the full sequence is: `CONFIG` (one per loaded layer) → `CHANGE` (one per Stop event) → `MATCH` (one per evaluated trigger, regardless of outcome) → `CMD` (one per spawned command) → `PASS` / `FAIL` / `TIMEOUT` (one per finished command). Commands that the cooldown/hash gate skips produce no `CMD` line — their absence between a matching `MATCH` and the next Stop event is itself the signal. The JSON log carries every phase (`hook_started`, `gate_decision`, `state_saved`, `hook_completed`) for programmatic queries; the text log keeps just the user-facing chain. An aborted hook surfaces `ERROR` (the message verbatim).
 
 ### JSON Lines entry types (`.json`)
 

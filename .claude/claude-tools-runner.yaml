@@ -5,4 +5,9 @@ triggers:
       - "src/**/*.ts"
       - "scripts/**/*.ts"
     commands:
+      - run: "bun run compile"
       - run: "bun run test"
+      - run: "bun run hook-smoke"
+        cooldown: 2m
+      - run: "bun run smoke"
+        cooldown: 2m

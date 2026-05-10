@@ -80,96 +80,92 @@ describe("resolveCommandLogDir", () => {
 });
 
 describe("labelFor", () => {
-    test("renders gate_decision as RUN or SKIP based on the decision", () => {
-        const runEntry: IAuditLogEntry = {
-            type: "gate_decision",
+    test("returns the user-facing labels for the surfaced text-log variants", () => {
+        const configEntry: IAuditLogEntry = {
+            type: "config_load",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            filePath: "a.yaml",
+            triggerCount: 1,
+            hashesPath: "/h.yaml",
+            runsDir: "/runs",
+            logBaseDir: "/log",
+        };
+        expect(labelFor(configEntry)).toBe("CONFIG");
+
+        const fileEntry: IAuditLogEntry = {
+            type: "changed_files",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            count: 0,
+            files: [],
+        };
+        expect(labelFor(fileEntry)).toBe("CHANGE");
+
+        const matchEntry: IAuditLogEntry = {
+            type: "trigger_match",
             timestamp: "2026-05-09T14:30:15.123+10:00",
             sourceFile: "a.yaml",
             sourceLine: 4,
             triggerIndex: 0,
-            commandIndex: 0,
-            expandedRun: "echo",
-            expandedCwd: "/tmp",
-            filesHash: "abc",
-            cooldownSeconds: 60,
-            decision: "run",
-            reason: "first run",
+            patterns: ["**/*.ts"],
+            matchedFiles: ["a.ts"],
+            unmatchedFiles: [],
         };
-        expect(labelFor(runEntry)).toBe("RUN");
-        expect(labelFor({ ...runEntry, decision: "skip", reason: "in cooldown" })).toBe("SKIP");
-    });
+        expect(labelFor(matchEntry)).toBe("MATCH");
 
-    test("renders command_result as PASS, FAIL, or TIMEOUT based on the outcome", () => {
-        const baseEntry: IAuditLogEntry = {
+        const startEntry: IAuditLogEntry = {
+            type: "command_started",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            sourceFile: "a.yaml",
+            sourceLine: 5,
+            triggerIndex: 0,
+            commandIndex: 0,
+            expandedRun: "bun run test",
+            expandedCwd: "/tmp",
+            pid: 123,
+            timeoutSeconds: 30,
+            logFile: "/tmp/log.log",
+        };
+        expect(labelFor(startEntry)).toBe("CMD");
+
+        const passEntry: IAuditLogEntry = {
             type: "command_result",
             timestamp: "2026-05-09T14:30:15.123+10:00",
             sourceFile: "a.yaml",
-            sourceLine: 4,
+            sourceLine: 5,
             triggerIndex: 0,
             commandIndex: 0,
-            expandedRun: "echo",
+            expandedRun: "bun run test",
             expandedCwd: "/tmp",
             exitCode: 0,
             durationMs: 5,
             outcome: "pass",
             logFile: "/tmp/log.log",
         };
-        expect(labelFor(baseEntry)).toBe("PASS");
-        expect(labelFor({ ...baseEntry, outcome: "fail", exitCode: 2 })).toBe("FAIL");
-        expect(labelFor({ ...baseEntry, outcome: "timeout", exitCode: -1 })).toBe("TIMEOUT");
-    });
+        expect(labelFor(passEntry)).toBe("PASS");
+        expect(labelFor({ ...passEntry, outcome: "fail", exitCode: 2 })).toBe("FAIL");
+        expect(labelFor({ ...passEntry, outcome: "timeout", exitCode: -1 })).toBe("TIMEOUT");
 
-    test("renders hook_error as ERROR", () => {
-        const entry: IAuditLogEntry = {
+        const errorEntry: IAuditLogEntry = {
             type: "hook_error",
             timestamp: "2026-05-09T14:30:15.123+10:00",
             message: "boom",
         };
-        expect(labelFor(entry)).toBe("ERROR");
+        expect(labelFor(errorEntry)).toBe("ERROR");
     });
 });
 
 describe("renderEntryBody", () => {
-    test("returns null for hook_started so it never appears in the text log", () => {
-        const body = renderEntryBody({
-            type: "hook_started",
-            timestamp: "2026-05-09T14:30:15.123+10:00",
-            cwd: "/tmp/proj",
-            projectDir: "/tmp/proj",
-            stopHookActive: false,
-        });
-        expect(body).toBeNull();
-    });
-
-    test("returns null for config_load, changed_files, trigger_match, command_started, state_saved, hook_completed", () => {
+    test("returns null for entries that are JSON-only (hook_started, gate_decision, state_saved, hook_completed)", () => {
         const variants: IAuditLogEntry[] = [
             {
-                type: "config_load",
+                type: "hook_started",
                 timestamp: "2026-05-09T14:30:15.123+10:00",
-                filePath: "a.yaml",
-                triggerCount: 1,
-                hashesPath: "/h.yaml",
-                runsDir: "/runs",
-                logBaseDir: "/log",
+                cwd: "/tmp/proj",
+                projectDir: "/tmp/proj",
+                stopHookActive: false,
             },
             {
-                type: "changed_files",
-                timestamp: "2026-05-09T14:30:15.123+10:00",
-                count: 1,
-                files: [{ path: "a.ts" }],
-            },
-            {
-                type: "trigger_match",
-                timestamp: "2026-05-09T14:30:15.123+10:00",
-                sourceFile: "a.yaml",
-                sourceLine: 4,
-                triggerIndex: 0,
-                patterns: ["**/*.ts"],
-                matchedFiles: ["a.ts"],
-                unmatchedFiles: [],
-            },
-            {
-                type: "command_started",
+                type: "gate_decision",
                 timestamp: "2026-05-09T14:30:15.123+10:00",
                 sourceFile: "a.yaml",
                 sourceLine: 5,
@@ -177,9 +173,10 @@ describe("renderEntryBody", () => {
                 commandIndex: 0,
                 expandedRun: "echo",
                 expandedCwd: "/tmp",
-                pid: 123,
-                timeoutSeconds: 30,
-                logFile: "/tmp/log.log",
+                filesHash: "abc",
+                cooldownSeconds: 60,
+                decision: "run",
+                reason: "first run",
             },
             {
                 type: "state_saved",
@@ -207,9 +204,84 @@ describe("renderEntryBody", () => {
         }
     });
 
-    test("gate_decision body uses sourceFile:sourceLine prefix, the expanded run, and the reason", () => {
-        const runBody = renderEntryBody({
-            type: "gate_decision",
+    test("config_load body is just the file path", () => {
+        const body = renderEntryBody({
+            type: "config_load",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            filePath: ".claude/claude-tools-runner.yaml",
+            triggerCount: 2,
+            hashesPath: "/h.yaml",
+            runsDir: "/runs",
+            logBaseDir: "/log",
+        });
+        expect(body).toBe(".claude/claude-tools-runner.yaml");
+    });
+
+    test("changed_files body shows the count and the comma list", () => {
+        const body = renderEntryBody({
+            type: "changed_files",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            count: 2,
+            files: [{ path: "src/a.ts" }, { path: "src/b.ts" }],
+        });
+        expect(body).toBe("2 files: src/a.ts, src/b.ts");
+    });
+
+    test("changed_files body collapses to '0 files' when nothing changed", () => {
+        const body = renderEntryBody({
+            type: "changed_files",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            count: 0,
+            files: [],
+        });
+        expect(body).toBe("0 files");
+    });
+
+    test("changed_files body truncates very long lists with an ellipsis", () => {
+        const longFiles: { path: string }[] = [];
+        for (let fileIndex = 0; fileIndex < 100; fileIndex++) {
+            longFiles.push({ path: `src/file-${fileIndex}.ts` });
+        }
+        const body = renderEntryBody({
+            type: "changed_files",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            count: longFiles.length,
+            files: longFiles,
+        });
+        expect(body!.endsWith("...")).toBe(true);
+    });
+
+    test("trigger_match body shows patterns, the matched/total fraction, and the matched file list when non-empty", () => {
+        const body = renderEntryBody({
+            type: "trigger_match",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            sourceFile: ".claude/claude-tools-runner.yaml",
+            sourceLine: 4,
+            triggerIndex: 0,
+            patterns: ["src/**/*.ts", "scripts/**/*.ts"],
+            matchedFiles: ["src/a.ts", "src/b.ts"],
+            unmatchedFiles: ["docs/x.md"],
+        });
+        expect(body).toBe(".claude/claude-tools-runner.yaml:4 patterns=src/**/*.ts,scripts/**/*.ts matched 2/3: src/a.ts, src/b.ts");
+    });
+
+    test("trigger_match body with zero matches omits the file list and just shows 0/N", () => {
+        const body = renderEntryBody({
+            type: "trigger_match",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            sourceFile: ".claude/claude-tools-runner.yaml",
+            sourceLine: 9,
+            triggerIndex: 1,
+            patterns: ["**/*.go"],
+            matchedFiles: [],
+            unmatchedFiles: ["src/a.ts"],
+        });
+        expect(body).toBe(".claude/claude-tools-runner.yaml:9 patterns=**/*.go matched 0/1");
+    });
+
+    test("command_started body shows source location and the expanded run", () => {
+        const body = renderEntryBody({
+            type: "command_started",
             timestamp: "2026-05-09T14:30:15.123+10:00",
             sourceFile: "a.yaml",
             sourceLine: 5,
@@ -217,31 +289,14 @@ describe("renderEntryBody", () => {
             commandIndex: 0,
             expandedRun: "bun run test",
             expandedCwd: "/tmp",
-            filesHash: "abc",
-            cooldownSeconds: 60,
-            decision: "run",
-            reason: "first run",
+            pid: 123,
+            timeoutSeconds: 30,
+            logFile: "/tmp/log.log",
         });
-        expect(runBody).toBe(`a.yaml:5 "bun run test" first run`);
-
-        const skipBody = renderEntryBody({
-            type: "gate_decision",
-            timestamp: "2026-05-09T14:30:15.123+10:00",
-            sourceFile: "a.yaml",
-            sourceLine: 7,
-            triggerIndex: 0,
-            commandIndex: 1,
-            expandedRun: "bun run lint",
-            expandedCwd: "/tmp",
-            filesHash: "abc",
-            cooldownSeconds: 60,
-            decision: "skip",
-            reason: "no file changes since last successful run",
-        });
-        expect(skipBody).toBe(`a.yaml:7 "bun run lint" no file changes since last successful run`);
+        expect(body).toBe(`a.yaml:5 "bun run test"`);
     });
 
-    test("command_result PASS body omits exit code (always 0)", () => {
+    test("command_result PASS body shows just duration (PASS label already encodes exit=0)", () => {
         const body = renderEntryBody({
             type: "command_result",
             timestamp: "2026-05-09T14:30:15.123+10:00",
@@ -259,7 +314,7 @@ describe("renderEntryBody", () => {
         expect(body).toBe(`a.yaml:5 "bun run test" 1586ms`);
     });
 
-    test("command_result FAIL body keeps the exit code so the cause is visible", () => {
+    test("command_result FAIL body shows the failing exit code and duration", () => {
         const body = renderEntryBody({
             type: "command_result",
             timestamp: "2026-05-09T14:30:15.123+10:00",
@@ -277,7 +332,7 @@ describe("renderEntryBody", () => {
         expect(body).toBe(`a.yaml:5 "bun run test" exit=2 7ms`);
     });
 
-    test("command_result TIMEOUT body keeps exit=-1 so it is recognisable as the timeout sentinel", () => {
+    test("command_result TIMEOUT body shows just duration (TIMEOUT label already encodes the kill)", () => {
         const body = renderEntryBody({
             type: "command_result",
             timestamp: "2026-05-09T14:30:15.123+10:00",
@@ -285,14 +340,14 @@ describe("renderEntryBody", () => {
             sourceLine: 5,
             triggerIndex: 0,
             commandIndex: 0,
-            expandedRun: "bun run test",
+            expandedRun: "sleep 5",
             expandedCwd: "/tmp",
             exitCode: -1,
-            durationMs: 50,
+            durationMs: 1004,
             outcome: "timeout",
             logFile: "/tmp/log.log",
         });
-        expect(body).toBe(`a.yaml:5 "bun run test" exit=-1 50ms`);
+        expect(body).toBe(`a.yaml:5 "sleep 5" 1004ms`);
     });
 
     test("hook_error body is the message verbatim (stack stays in JSON only)", () => {
@@ -307,7 +362,7 @@ describe("renderEntryBody", () => {
 });
 
 describe("formatTextEntry", () => {
-    test("produces a HH:MM:SS  LABEL  body line for surfaced entries", () => {
+    test("produces a HH:MM:SS  LABEL  body line for PASS results", () => {
         const entry: IAuditLogEntry = {
             type: "command_result",
             timestamp: "2026-05-09T14:30:15.123+10:00",
@@ -324,6 +379,49 @@ describe("formatTextEntry", () => {
         };
         const line = formatTextEntry(entry);
         expect(line).toBe(`14:30:15  PASS    a.yaml:5 "bun run test" 1586ms`);
+    });
+
+    test("aligns short labels into the same column as TIMEOUT (the longest label) so consecutive lines line up", () => {
+        const fileEntry: IAuditLogEntry = {
+            type: "changed_files",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            count: 1,
+            files: [{ path: "a.ts" }],
+        };
+        expect(formatTextEntry(fileEntry)).toBe(`14:30:15  CHANGE  1 files: a.ts`);
+
+        const timeoutEntry: IAuditLogEntry = {
+            type: "command_result",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            sourceFile: "a.yaml",
+            sourceLine: 5,
+            triggerIndex: 0,
+            commandIndex: 0,
+            expandedRun: "sleep 5",
+            expandedCwd: "/tmp",
+            exitCode: -1,
+            durationMs: 1004,
+            outcome: "timeout",
+            logFile: "/tmp/log.log",
+        };
+        expect(formatTextEntry(timeoutEntry)).toBe(`14:30:15  TIMEOUT a.yaml:5 "sleep 5" 1004ms`);
+    });
+
+    test("CMD lines render with the short three-letter label", () => {
+        const entry: IAuditLogEntry = {
+            type: "command_started",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            sourceFile: "a.yaml",
+            sourceLine: 5,
+            triggerIndex: 0,
+            commandIndex: 0,
+            expandedRun: "bun run test",
+            expandedCwd: "/tmp",
+            pid: 123,
+            timeoutSeconds: 30,
+            logFile: "/tmp/log.log",
+        };
+        expect(formatTextEntry(entry)).toBe(`14:30:15  CMD     a.yaml:5 "bun run test"`);
     });
 
     test("returns null for entries that exist only in the JSON log", () => {
@@ -436,7 +534,25 @@ describe("FileAuditLogger.log", () => {
         expect(textLines[1]).toContain("bun run lint");
     });
 
-    test("text-only entries write to JSON but skip the text log", async () => {
+    test("JSON-only entries write to JSON but skip the text log", async () => {
+        const fixedNow = new Date(2026, 4, 9, 14, 30, 15, 123);
+        const logger = new FileAuditLogger(tempDir, fixedNow);
+        await logger.log({
+            type: "hook_completed",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            durationMs: 5,
+            pass: 0,
+            fail: 0,
+            skip: 0,
+            exitCode: 0,
+        });
+        const jsonText = await fs.readFile(resolveJsonLogPath(tempDir, fixedNow), "utf8");
+        await expect(fs.readFile(resolveTextLogPath(tempDir, fixedNow), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+        expect(jsonText.trim().length).toBeGreaterThan(0);
+        expect(JSON.parse(jsonText.trim()).type).toBe("hook_completed");
+    });
+
+    test("config_load surfaces a CONFIG line in the text log", async () => {
         const fixedNow = new Date(2026, 4, 9, 14, 30, 15, 123);
         const logger = new FileAuditLogger(tempDir, fixedNow);
         await logger.log({
@@ -449,9 +565,9 @@ describe("FileAuditLogger.log", () => {
             logBaseDir: "/tmp/p/.claude/claude-tools-runner/log",
         });
         const jsonText = await fs.readFile(resolveJsonLogPath(tempDir, fixedNow), "utf8");
-        await expect(fs.readFile(resolveTextLogPath(tempDir, fixedNow), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-        expect(jsonText.trim().length).toBeGreaterThan(0);
+        const textBody = await fs.readFile(resolveTextLogPath(tempDir, fixedNow), "utf8");
         expect(JSON.parse(jsonText.trim()).type).toBe("config_load");
+        expect(textBody).toBe("14:30:15  CONFIG  a.yaml\n");
     });
 
     test("five concurrent calls produce five lines without partial-line interleaving in either file", async () => {
