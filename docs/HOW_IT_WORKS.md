@@ -104,6 +104,21 @@ Before recursion, the hook reads the project root config's optional `ignore` glo
 
 If `git` is not on `$PATH`, the spawn returns ENOENT via the `error` event and the hook logs `[tools-runner] git binary not found on PATH, skipping` and exits 0.
 
+## Triggers
+
+A trigger is the unit of declarative configuration the user writes in YAML. Each trigger bundles a few fields:
+
+- `paths`: one or more glob patterns selecting which changed files the trigger cares about.
+- `run`: the shell command to execute when the patterns match, with optional template variables (`${{file_path}}`, `${{file_dir}}`, `${{group_dir}}`, `${{project}}`, etc.).
+- `cwd`: optional working directory for the spawn (defaults to the layer's `projectDir`); also expandable.
+- `cooldown`: optional duration string (e.g. `"30s"`, `"5m"`) parsed at config-load time into integer seconds.
+- `timeout`: optional duration string parsed the same way; defaults to `"5m"`.
+- `group_by`: optional glob used together with `${{group_dir}}` to partition matched files into per-group invocations.
+
+Each layer holds its own private trigger list (loaded by `FileLayer.create`) and never exposes it across layers. For each Stop event the runner asks every layer "given these changed files, what commands should I prepare?" and the layer answers by running its triggers through `compileCommands`.
+
+A trigger's lifecycle in one Stop event is: load from YAML (with its 1-based source line captured by the `yaml` document parser) → match `paths` against the layer's changed-file slice → expand template variables in `run` and `cwd` → emit one or more `CompiledCommand`s (granularity determined by which variables appear, see [CompiledCommand grouping](#compiledcommand-grouping)) → gate each emitted command by cooldown and hash → spawn the survivors in parallel. The full YAML schema and template variable reference lives in [CONFIGURATION.md](CONFIGURATION.md).
+
 ## Changed-file collection
 
 For each config layer, `collectChangedFiles(scopeDir)` runs `git status --porcelain=v1 -z --untracked-files=all` from `scopeDir`. Git walks upward to find the enclosing repo and returns results as repo-relative paths; the plugin filters those to files whose absolute path falls under `scopeDir`. A file is included if either the index status or the worktree status is non-space, so both staged and unstaged changes are returned. For renames (`R`) the destination path is taken. Deletions (`D` in worktree) are excluded: there is nothing on disk to hash.
@@ -202,6 +217,18 @@ A negative `elapsedMs` (clock went backwards or a test injected an earlier `now`
 `runCommands` spawns every gate-passing command in parallel via `Promise.all`. Each spawn is `child_process.spawn("sh", ["-c", expandedRun], { cwd: expandedCwd, stdio: ["ignore", "pipe", "pipe"] })` from `node:child_process`. The runner writes both streams into a single per-command log file at `<scopeDir>/.claude/claude-tools-runner/log/YYYY-MM/DD/HH/MM-SS-<ms>-<commandKey-first8>.log`, tagging each line with its source: stdout lines are prefixed with `[OUT] ` and stderr lines with `[ERR] `. Lines from the two streams are emitted in the order their terminating newline arrives, so a reader still sees the natural interleaving but can distinguish which stream produced any given line. The runner maintains a small per-stream line buffer: incoming chunks are split on `\n`, complete lines are written immediately with the appropriate prefix, and any partial trailing line is flushed with its prefix (followed by a synthetic `\n`) when the stream ends. The audit-log entries (`command_started` and `command_result`) carry the same `logFile` path so a user inspecting the audit log can jump straight to the command's full output. A per-command `timeout` (default 300s) races the `exited` promise against `setTimeout`; on expiry `proc.kill("SIGTERM")` is called (then `SIGKILL` 2s later for stragglers) and the run is recorded as `FAIL timeout`.
 
 The hook has no global wall-clock cap: every individual command has its own `timeout` (default `"5m"`), so a hung command is bounded by its own kill timer. The hook process exits naturally once every spawned command resolves (success, fail, or per-command timeout). Layer-level parallelism stacks on top of within-layer parallelism via an outer `Promise.all` over each layer's `runCommands` call.
+
+## State persistence: locking and atomic writes
+
+`saveState` is reached at the end of every gate-passing hook invocation, and multiple hooks (or multiple parallel layers within one hook) can be writing to the same `<scopeDir>/.claude/claude-tools-runner/` directory at once. Two cooperating mechanisms keep the state files from corrupting each other: a per-file write lock and an atomic tmp-file rename.
+
+**Per-file write locks** (`src/lock.ts`): each per-command run file (`runs/<commandKey>.yaml`) has its own sibling lock token at `runs/<commandKey>.yaml.lock`, and the hash cache (`hashes.yaml`) has its own at `hashes.yaml.lock`. `withFileLock` uses `fs.mkdir` as the lock primitive: `mkdir` either succeeds (the caller now holds the lock) or fails with `EEXIST` (someone else does). On `EEXIST` the acquirer stats the lock directory; if its `mtime` is older than 30 seconds the lock is treated as stale (the previous holder probably crashed or was SIGKILLed) and stolen via `rmdir` then retry. Otherwise the acquirer sleeps with exponential backoff (5ms, doubling, capped at 200ms) and retries the `mkdir`. The lock is always released in a `finally` block so an exception inside the critical section never strands it. `mkdir`-as-lock is atomic across processes on every POSIX filesystem, which is the property the runner needs: two parallel hooks never both believe they hold the same lock. Lock granularity is per file, not per directory: writers updating different per-command files run in parallel and only writers contending on the same file serialise.
+
+**Atomic writes via tmp + rename** (`src/state.ts`): inside the lock, `atomicWriteYaml` never writes to the destination file directly. It serialises the payload via `YAML.stringify`, writes the bytes to a sibling tmp file named `<dest>.<pid>.<8-random-hex>.tmp`, then calls `fs.rename(tmp, dest)`. `rename` is atomic on the same filesystem, so a concurrent reader either sees the old file or the new file, never a partial write. The unique tmp suffix (pid plus 8 random bytes) means two writers cannot collide on the same intermediate file even if they bypass the lock (defense in depth), and a crashed write leaves an identifiable orphan rather than silently pre-empting the next writer's tmp slot.
+
+**Why both**: the lock alone is not enough, because a process killed mid-`writeFile` would still leave a torn file. The rename alone is not enough, because two writers could each prepare a tmp file and the second `rename` would clobber the first writer's record without the lock observing that each writer's intent was a read-modify-write cycle. Together the lock serialises read-modify-write per file and the rename guarantees readers always see a complete file. The common case during a single hook's `saveState` (writing several different per-command files plus the hash cache) proceeds in parallel because each file has its own lock.
+
+**Reader behavior**: `loadHashesFile` and `loadCommandRunFile` treat `ENOENT` as "no prior state" and corrupt YAML as "drop and re-derive on the next run" (one diagnostic line is written to stderr in the corrupt case). Because writes are atomic, the corrupt branch is reachable only through external tampering or filesystem-level damage, never through writer interleaving.
 
 ## Three-Stop-event sequence
 
