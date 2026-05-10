@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { decideGate } from "../gate";
 import { aggregateHash } from "../hash";
 import { computeCommandKey } from "../compile";
+import { emptyState } from "../state";
 import { ChangedFile, CommandConfig, CommandRunEntry, CompiledCommand, State } from "../types";
 
 // Holds a temp directory path for the lifetime of one test. Each test gets its own area so file content,
@@ -68,7 +69,9 @@ function makeStateWithEntry(prepared: CompiledCommand, lastRunAt: string, lastFi
         lastFilesHash,
         matchedFiles: prepared.matchedFiles.map(matchedFile => matchedFile.absPath).sort(),
     };
-    return { fileHashes: {}, commandRuns: [entry] };
+    const state: State = emptyState();
+    state.commandRuns.push(entry);
+    return state;
 }
 
 describe("decideGate", () => {
@@ -85,7 +88,7 @@ describe("decideGate", () => {
     test("returns run with reason 'first run' when there is no prior entry", async () => {
         const matchedFile: ChangedFile = await writeChangedFile(tempArea, "src/foo.ts", "alpha");
         const prepared: CompiledCommand = makePrepared([matchedFile], "echo first", "/work", 60);
-        const state: State = { fileHashes: {}, commandRuns: [] };
+        const state: State = emptyState();
         const now: Date = new Date("2026-05-09T12:00:00.000Z");
 
         const decision = await decideGate(prepared, state, now);

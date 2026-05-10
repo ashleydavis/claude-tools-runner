@@ -1,1 +1,4 @@
-The state file will be corrupted if there a multiple claudes running in parallel.
+
+Change the config file and log to `claude-tools-runner`.
+
+Every intermediate file should be under claude-tools-runner-tmp/

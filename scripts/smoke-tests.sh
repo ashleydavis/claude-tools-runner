@@ -203,7 +203,8 @@ EOF
 scenario_4_clean_slate_after_state_delete() {
     start_scenario 4 "clean-slate after state delete"
     sleep 1.1
-    rm -f "$SANDBOX_A/.claude/tools-runner-state.yaml"
+    rm -f "$SANDBOX_A/.claude/tools-runner-hashes.yaml"
+    rm -rf "$SANDBOX_A/.claude/tools-runner-runs"
     local before_mtime
     before_mtime=$(stat -c %Y "$SANDBOX_A/smoke.out")
 
@@ -390,42 +391,54 @@ EOF
         fail_dump "$stderr_file"
     fi
 
-    local state_path="$sandbox/.claude/tools-runner-state.yaml"
-    if [ ! -f "$state_path" ]; then
-        fail_assert "state file does not exist at $state_path"
+    local hashes_path="$sandbox/.claude/tools-runner-hashes.yaml"
+    local runs_dir="$sandbox/.claude/tools-runner-runs"
+    if [ ! -f "$hashes_path" ]; then
+        fail_assert "hash cache file does not exist at $hashes_path"
+    elif [ ! -d "$runs_dir" ]; then
+        fail_assert "runs directory does not exist at $runs_dir"
     else
         local validation_output
         local validation_exit=0
-        validation_output=$(cd "$PROJECT_DIR" && STATE_PATH="$state_path" bun -e '
+        validation_output=$(cd "$PROJECT_DIR" && HASHES_PATH="$hashes_path" RUNS_DIR="$runs_dir" bun -e '
 const yamlMod = await import("yaml");
 const fsMod = await import("node:fs");
-const text = fsMod.readFileSync(process.env.STATE_PATH, "utf8");
-const state = yamlMod.parse(text);
+const pathMod = await import("node:path");
 const errors = [];
-if (!state || typeof state !== "object" || Array.isArray(state)) {
-    errors.push("state root is not a mapping");
+
+const hashesText = fsMod.readFileSync(process.env.HASHES_PATH, "utf8");
+const hashesFile = yamlMod.parse(hashesText);
+if (!hashesFile || typeof hashesFile !== "object" || Array.isArray(hashesFile)) {
+    errors.push("hashes file root is not a mapping");
+}
+else if (!hashesFile.fileHashes || typeof hashesFile.fileHashes !== "object" || Array.isArray(hashesFile.fileHashes) || Object.keys(hashesFile.fileHashes).length < 1) {
+    errors.push("fileHashes must be a non-empty mapping");
+}
+
+const runFiles = fsMod.readdirSync(process.env.RUNS_DIR).filter(name => name.endsWith(".yaml"));
+if (runFiles.length < 1) {
+    errors.push("runs directory must contain at least one .yaml file");
 }
 else {
-    if (!Array.isArray(state.commandRuns) || state.commandRuns.length < 1) {
-        errors.push("commandRuns must be a non-empty sequence");
+    const runText = fsMod.readFileSync(pathMod.join(process.env.RUNS_DIR, runFiles[0]), "utf8");
+    const runFile = yamlMod.parse(runText);
+    if (!runFile || typeof runFile !== "object" || Array.isArray(runFile)) {
+        errors.push("run file root is not a mapping");
     }
     else {
-        const entry = state.commandRuns[0];
-        if (typeof entry.commandKey !== "string" || !/^[0-9a-f]+$/.test(entry.commandKey)) {
+        if (typeof runFile.commandKey !== "string" || !/^[0-9a-f]+$/.test(runFile.commandKey)) {
             errors.push("commandKey must be a hex string");
         }
-        if (typeof entry.expandedRun !== "string") errors.push("expandedRun must be a string");
-        if (typeof entry.expandedCwd !== "string") errors.push("expandedCwd must be a string");
-        if (typeof entry.sourceFile !== "string") errors.push("sourceFile must be a string");
-        if (typeof entry.sourceLine !== "number") errors.push("sourceLine must be a number");
-        if (typeof entry.lastRunAt !== "string") errors.push("lastRunAt must be a string");
-        if (typeof entry.lastFilesHash !== "string") errors.push("lastFilesHash must be a string");
-        if (!Array.isArray(entry.matchedFiles)) errors.push("matchedFiles must be a sequence");
-    }
-    if (!state.fileHashes || typeof state.fileHashes !== "object" || Array.isArray(state.fileHashes) || Object.keys(state.fileHashes).length < 1) {
-        errors.push("fileHashes must be a non-empty mapping");
+        if (typeof runFile.expandedRun !== "string") errors.push("expandedRun must be a string");
+        if (typeof runFile.expandedCwd !== "string") errors.push("expandedCwd must be a string");
+        if (typeof runFile.sourceFile !== "string") errors.push("sourceFile must be a string");
+        if (typeof runFile.sourceLine !== "number") errors.push("sourceLine must be a number");
+        if (typeof runFile.lastRunAt !== "string") errors.push("lastRunAt must be a string");
+        if (typeof runFile.lastFilesHash !== "string") errors.push("lastFilesHash must be a string");
+        if (!Array.isArray(runFile.matchedFiles)) errors.push("matchedFiles must be a sequence");
     }
 }
+
 if (errors.length > 0) {
     console.log("INVALID:" + errors.join("; "));
     process.exit(1);

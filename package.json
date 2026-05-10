@@ -11,6 +11,7 @@
         "t": "bun run test",
         "smoke": "bash scripts/smoke-tests.sh",
         "hook-smoke": "bash scripts/hook-smoke-tests.sh",
+        "parallel-smoke": "bash scripts/parallel-smoke-tests.sh",
         "test:all": "bun run test && bash scripts/hook-smoke-tests.sh && bash scripts/smoke-tests.sh",
         "ta": "bun run test:all",
         "dev": "claude --plugin-dir ./plugin",

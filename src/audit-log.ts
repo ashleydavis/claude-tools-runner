@@ -186,13 +186,15 @@ export interface IAuditCommandResultEntry extends IAuditEntryBase {
 // itself; the cardinality fields are post-prune so they reflect what was actually written.
 export interface IAuditStateSavedEntry extends IAuditEntryBase {
     type: "state_saved";
-    // Absolute path of the persisted state YAML.
-    filePath: string;
-    // Number of `commandRuns` entries written to disk.
+    // Absolute path of the per-project hash cache YAML (`.claude/tools-runner-hashes.yaml`).
+    hashesPath: string;
+    // Absolute path of the directory holding one YAML file per `commandKey` (`.claude/tools-runner-runs/`).
+    runsDir: string;
+    // Number of `commandRuns` entries surviving on disk after this save (post-TTL-prune).
     commandRunsCount: number;
-    // Number of `fileHashes` entries written to disk.
+    // Number of `fileHashes` entries written to disk after this save (post-orphan-prune).
     fileHashesCount: number;
-    // Number of `commandRuns` entries dropped by the TTL prune during this save.
+    // Number of per-command run files unlinked by the TTL prune during this save.
     prunedCommandRuns: number;
     // Number of `fileHashes` entries dropped by the orphan cascade during this save.
     prunedFileHashes: number;
@@ -379,7 +381,7 @@ export function renderEntryBody(entry: IAuditLogEntry): string {
         return `${entry.sourceFile}:${entry.sourceLine} cmd=${entry.commandIndex} ${entry.outcome} exit=${entry.exitCode} ${entry.durationMs}ms`;
     }
     if (entry.type === "state_saved") {
-        return `${entry.filePath} (${entry.commandRunsCount} runs, ${entry.fileHashesCount} hashes; pruned ${entry.prunedCommandRuns}+${entry.prunedFileHashes})`;
+        return `${entry.hashesPath} + ${entry.runsDir} (${entry.commandRunsCount} runs, ${entry.fileHashesCount} hashes; pruned ${entry.prunedCommandRuns}+${entry.prunedFileHashes})`;
     }
     if (entry.type === "hook_completed") {
         const skipPart = entry.skipReason !== undefined ? ` skip=${entry.skipReason}` : "";

@@ -33,3 +33,6 @@ jobs:
 
       - name: Smoke tests (hook sanity)
         run: bash scripts/hook-smoke-tests.sh
+
+      - name: Smoke tests (parallel write contention)
+        run: bash scripts/parallel-smoke-tests.sh

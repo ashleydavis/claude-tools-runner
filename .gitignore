@@ -4,7 +4,9 @@ plugin/dist/
 .DS_Store
 .env*
 .claude/tools-runner-state.yaml
+.claude/tools-runner-hashes.yaml
 .claude/tools-runner-log/
+.claude/tools-runner-runs/
 tmp/
 .claude/permissions-debug.log
 .claude/permissions-log/

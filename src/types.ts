@@ -64,6 +64,8 @@ export interface CommandRunEntry {
     lastFilesHash: string;
     // Sorted array of absolute path strings: the files this command was last triggered against. Used by `saveState` to prune unreferenced `fileHashes` entries.
     matchedFiles: string[];
+    // True when this entry has been upserted since load and the per-command file should be rewritten on the next `saveState`. Never persisted to YAML; absent on entries returned by `loadState` (treated as not dirty).
+    dirty?: boolean;
 }
 
 // JSON payload Claude Code sends to the Stop hook on stdin. All fields are optional so the hook can degrade gracefully on partial input.

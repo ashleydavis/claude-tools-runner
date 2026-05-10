@@ -20,6 +20,7 @@ import {
     safeKill,
     toLocalISOString,
 } from "../runner";
+import { emptyState } from "../state";
 import { ChangedFile, CommandConfig, CompiledCommand, State } from "../types";
 
 // Recording `IAuditLogger` used by the new audit-emission tests. Captures every entry handed to `log`
@@ -186,7 +187,7 @@ describe("runCommands", () => {
         const compiledOne = makeCompiled([fileOne], "echo one", path.join(tempDir, "work"), 0, 30);
         const compiledTwo = makeCompiled([fileTwo], "echo two", path.join(tempDir, "work"), 0, 30);
         const recorder = makeRecordingSpawner();
-        const state: State = { fileHashes: {}, commandRuns: [] };
+        const state: State = emptyState();
         const fixedNow = new Date("2026-05-09T14:30:15.123Z");
         const opts: RunCommandsOptions = {
             spawn: recorder.spawner,
@@ -217,7 +218,7 @@ describe("runCommands", () => {
         const fileOne = await writeChangedFile(tempDir, "src/alpha.ts", "alpha");
         const compiled = makeCompiled([fileTwo, fileOne], "echo ok", path.join(tempDir, "work"), 0, 30);
         const recorder = makeRecordingSpawner();
-        const state: State = { fileHashes: {}, commandRuns: [] };
+        const state: State = emptyState();
         const fixedNow = new Date("2026-05-09T14:30:15.123Z");
         const opts: RunCommandsOptions = {
             spawn: recorder.spawner,
@@ -248,7 +249,7 @@ describe("runCommands", () => {
         const fileOne = await writeChangedFile(tempDir, "src/a.ts", "alpha");
         const compiled = makeCompiled([fileOne], "echo body", path.join(tempDir, "work"), 0, 30);
         const recorder = makeRecordingSpawner();
-        const state: State = { fileHashes: {}, commandRuns: [] };
+        const state: State = emptyState();
         const fixedNow = new Date("2026-05-09T14:30:15.123Z");
         const opts: RunCommandsOptions = {
             spawn: recorder.spawner,
@@ -287,7 +288,7 @@ describe("runCommands", () => {
         const fileOne = await writeChangedFile(tempDir, "src/a.ts", "alpha");
         const compiled = makeCompiled([fileOne], "echo residue", path.join(tempDir, "work"), 0, 30);
         const recorder = makeRecordingSpawner();
-        const state: State = { fileHashes: {}, commandRuns: [] };
+        const state: State = emptyState();
         const fixedNow = new Date("2026-05-09T14:30:15.123Z");
         const opts: RunCommandsOptions = {
             spawn: recorder.spawner,
@@ -312,7 +313,7 @@ describe("runCommands", () => {
         const fileOne = await writeChangedFile(tempDir, "src/a.ts", "alpha");
         const compiled = makeCompiled([fileOne], "exit 2", path.join(tempDir, "work"), 0, 30);
         const recorder = makeRecordingSpawner();
-        const state: State = { fileHashes: {}, commandRuns: [] };
+        const state: State = emptyState();
         const fixedNow = new Date("2026-05-09T14:30:15.123Z");
         const opts: RunCommandsOptions = {
             spawn: recorder.spawner,
@@ -339,19 +340,17 @@ describe("runCommands", () => {
         const priorHash = await aggregateHash(compiled.matchedFiles, {});
         const priorMatchedFiles = [fileOne.absPath];
         const priorLastRunAt = "2026-05-09T14:30:00.000Z";
-        const state: State = {
-            fileHashes: {},
-            commandRuns: [{
-                commandKey: compiled.commandKey,
-                expandedRun: compiled.expandedRun,
-                expandedCwd: compiled.expandedCwd,
-                sourceFile: "prior.yaml",
-                sourceLine: 99,
-                lastRunAt: priorLastRunAt,
-                lastFilesHash: priorHash,
-                matchedFiles: priorMatchedFiles,
-            }],
-        };
+        const state: State = emptyState();
+        state.commandRuns.push({
+            commandKey: compiled.commandKey,
+            expandedRun: compiled.expandedRun,
+            expandedCwd: compiled.expandedCwd,
+            sourceFile: "prior.yaml",
+            sourceLine: 99,
+            lastRunAt: priorLastRunAt,
+            lastFilesHash: priorHash,
+            matchedFiles: priorMatchedFiles,
+        });
         const fixedNow = new Date("2026-05-09T14:30:15.123Z");
         let spawnCalls = 0;
         const opts: RunCommandsOptions = {
@@ -380,7 +379,7 @@ describe("runCommands", () => {
         const fileOne = await writeChangedFile(tempDir, "src/a.ts", "alpha");
         const compiled = makeCompiled([fileOne], "sleep forever", path.join(tempDir, "work"), 0, 0.05);
         const recorder = makeRecordingSpawner();
-        const state: State = { fileHashes: {}, commandRuns: [] };
+        const state: State = emptyState();
         const fixedNow = new Date("2026-05-09T14:30:15.123Z");
         const opts: RunCommandsOptions = {
             spawn: recorder.spawner,
@@ -410,7 +409,7 @@ describe("runCommands", () => {
         const fileOne = await writeChangedFile(tempDir, "src/a.ts", "alpha");
         const compiled = makeCompiled([fileOne], "missing-binary", path.join(tempDir, "work"), 0, 30);
         const recorder = makeRecordingSpawner();
-        const state: State = { fileHashes: {}, commandRuns: [] };
+        const state: State = emptyState();
         const fixedNow = new Date("2026-05-09T14:30:15.123Z");
         const opts: RunCommandsOptions = {
             spawn: recorder.spawner,
@@ -681,7 +680,7 @@ describe("runCommands audit-log emissions", () => {
         const compiledTwo = makeCompiled([fileTwo], "echo two", path.join(auditTempDir, "work"), 0, 30);
         const recorder = makeRecordingSpawner();
         const auditLogger = new RecordingAuditLogger();
-        const state: State = { fileHashes: {}, commandRuns: [] };
+        const state: State = emptyState();
         const fixedNow = new Date("2026-05-09T14:30:15.123Z");
         const opts: RunCommandsOptions = {
             spawn: recorder.spawner,
@@ -724,7 +723,7 @@ describe("runCommands audit-log emissions", () => {
         const compiled = makeCompiled([fileOne], "sleep forever", path.join(auditTempDir, "work"), 0, 0.05);
         const recorder = makeRecordingSpawner();
         const auditLogger = new RecordingAuditLogger();
-        const state: State = { fileHashes: {}, commandRuns: [] };
+        const state: State = emptyState();
         const fixedNow = new Date("2026-05-09T14:30:15.123Z");
         const opts: RunCommandsOptions = {
             spawn: recorder.spawner,
@@ -751,7 +750,7 @@ describe("runCommands audit-log emissions", () => {
         const compiled = makeCompiled([fileOne], "echo no-logger", path.join(auditTempDir, "work"), 0, 30);
         const recorder = makeRecordingSpawner();
         const auditLogger = new RecordingAuditLogger();
-        const state: State = { fileHashes: {}, commandRuns: [] };
+        const state: State = emptyState();
         const fixedNow = new Date("2026-05-09T14:30:15.123Z");
         const opts: RunCommandsOptions = {
             spawn: recorder.spawner,
@@ -834,7 +833,7 @@ describe("runOneCommand", () => {
             stderr: stubStderr,
         };
         const stubSpawner: Spawner = () => stubProc;
-        const state: State = { fileHashes: {}, commandRuns: [] };
+        const state: State = emptyState();
 
         const result = await runOneCommand(
             compiled,

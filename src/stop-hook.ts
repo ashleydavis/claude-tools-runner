@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { HookSkipReason, IAuditLogger, NullAuditLogger, createLogger, toLocalISOString } from "./audit-log";
 import { HOME_DISPLAY_PATH, homeConfigPath, scanConfigFiles } from "./config";
 import { collectChangedFiles } from "./git";
-import { loadState, SaveStateResult, saveState, statePath } from "./state";
+import { hashesPath, loadState, runsDir, SaveStateResult, saveState } from "./state";
 import { runCommands } from "./runner";
 import { FileLayer, TriggerRegistry } from "./trigger-registry";
 import { ChangedFile, CompiledCommand, StopHookInput } from "./types";
@@ -219,7 +219,7 @@ export async function runStopHook(): Promise<void> {
             return;
         }
 
-        const state = await loadState(statePath(projectDir));
+        const state = await loadState(projectDir);
 
         // Collect per-scope changed files. `ChangedFile.path` is scope-relative, so each layer must receive
         // only the changes that belong inside its own `scopeDir`; otherwise a sibling scope's `x.ts` (path
@@ -326,11 +326,10 @@ export async function runStopHook(): Promise<void> {
             projectDir,
         });
 
-        const stateFilePath = statePath(projectDir);
-        await fs.mkdir(path.dirname(stateFilePath), { recursive: true });
+        await fs.mkdir(path.join(projectDir, ".claude"), { recursive: true });
         let saveResult: SaveStateResult;
         try {
-            saveResult = await saveState(stateFilePath, state);
+            saveResult = await saveState(projectDir, state);
         }
         catch (caughtErr) {
             const saveErr = caughtErr as Error;
@@ -341,7 +340,8 @@ export async function runStopHook(): Promise<void> {
         await logger.log({
             type: "state_saved",
             timestamp: toLocalISOString(new Date()),
-            filePath: stateFilePath,
+            hashesPath: hashesPath(projectDir),
+            runsDir: runsDir(projectDir),
             commandRunsCount: state.commandRuns.length,
             fileHashesCount: Object.keys(state.fileHashes).length,
             prunedCommandRuns: saveResult.prunedCommandRuns,
