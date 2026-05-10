@@ -5,11 +5,13 @@ import * as YAML from "yaml";
 import { isMap, YAMLMap } from "yaml";
 import {
     byteOffsetToLineNumber,
+    compileIgnoreMatcher,
     computeTriggerSourceLines,
     HOME_DISPLAY_PATH,
     homeConfigPath,
     lineNumberOfNode,
     loadConfigFile,
+    loadProjectRootIgnorePatterns,
     scanConfigFiles,
     scanDirectoryRecursive,
     shouldRecurseInto,
@@ -106,6 +108,41 @@ describe("loadConfigFile", () => {
         expect(result!.triggers[0].commands[0].timeout).toBe(300);
         expect(result!.triggers[1].commands[0].cooldown).toBe(3600);
         expect(result!.triggers[1].commands[0].timeout).toBe(30);
+    });
+
+    test("accepts a top-level ignore list of glob strings", async () => {
+        const yamlText: string = [
+            "ignore:",
+            "  - 'e2e/**/tmp'",
+            "  - dist",
+            "triggers: []",
+            "",
+        ].join("\n");
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
+        await writeFileEnsuringDirs(filePath, yamlText);
+
+        const result: Config | null = await loadConfigFile(filePath);
+        expect(result!.ignore).toEqual(["e2e/**/tmp", "dist"]);
+    });
+
+    test("accepts ignore alongside no triggers key (returns triggers: [] plus ignore)", async () => {
+        const yamlText: string = "ignore:\n  - dist\n";
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
+        await writeFileEnsuringDirs(filePath, yamlText);
+        const result: Config | null = await loadConfigFile(filePath);
+        expect(result).toEqual({ triggers: [], ignore: ["dist"] });
+    });
+
+    test("rejects non-array ignore", async () => {
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
+        await writeFileEnsuringDirs(filePath, "ignore: 'dist'\ntriggers: []\n");
+        await expect(loadConfigFile(filePath)).rejects.toThrow(/ignore must be a YAML sequence/);
+    });
+
+    test("rejects ignore entries that are not non-empty strings", async () => {
+        const filePath: string = path.join(tempArea.rootDir, "claude-tools-runner.yaml");
+        await writeFileEnsuringDirs(filePath, "ignore:\n  - ''\ntriggers: []\n");
+        await expect(loadConfigFile(filePath)).rejects.toThrow(/ignore\[0\] must be a non-empty string/);
     });
 
     test("throws on unparseable yaml", async () => {
@@ -408,6 +445,106 @@ describe("scanConfigFiles", () => {
         const results: string[] = await scanConfigFiles(tempArea.rootDir);
         expect(results).toEqual([]);
     });
+
+    test("ignorePatterns prunes whole subtrees by project-relative POSIX path", async () => {
+        const rootConfig: string = path.join(tempArea.rootDir, ".claude", "claude-tools-runner.yaml");
+        const fixtureA: string = path.join(tempArea.rootDir, "e2e", "20-yaml-parse-error", "tmp", "project", ".claude", "claude-tools-runner.yaml");
+        const fixtureB: string = path.join(tempArea.rootDir, "e2e", "01-cooldown", "tmp", "project", ".claude", "claude-tools-runner.yaml");
+        const realNested: string = path.join(tempArea.rootDir, "packages", "alpha", ".claude", "claude-tools-runner.yaml");
+        await writeFileEnsuringDirs(rootConfig, "triggers: []\n");
+        await writeFileEnsuringDirs(fixtureA, "triggers: []\n");
+        await writeFileEnsuringDirs(fixtureB, "triggers: []\n");
+        await writeFileEnsuringDirs(realNested, "triggers: []\n");
+
+        const results: string[] = await scanConfigFiles(tempArea.rootDir, ["e2e/**/tmp"]);
+        expect(results).toEqual([rootConfig, realNested].sort());
+    });
+
+    test("an empty or undefined ignorePatterns is a no-op", async () => {
+        const rootConfig: string = path.join(tempArea.rootDir, ".claude", "claude-tools-runner.yaml");
+        const nestedConfig: string = path.join(tempArea.rootDir, "sub", ".claude", "claude-tools-runner.yaml");
+        await writeFileEnsuringDirs(rootConfig, "triggers: []\n");
+        await writeFileEnsuringDirs(nestedConfig, "triggers: []\n");
+
+        expect((await scanConfigFiles(tempArea.rootDir)).length).toBe(2);
+        expect((await scanConfigFiles(tempArea.rootDir, [])).length).toBe(2);
+    });
+});
+
+describe("compileIgnoreMatcher", () => {
+    test("returns false for every input when patterns is undefined or empty", () => {
+        const undefinedMatcher = compileIgnoreMatcher(undefined);
+        expect(undefinedMatcher("anything")).toBe(false);
+        expect(undefinedMatcher("e2e/foo/tmp")).toBe(false);
+
+        const emptyMatcher = compileIgnoreMatcher([]);
+        expect(emptyMatcher("anything")).toBe(false);
+    });
+
+    test("matches a glob with `**` segments anywhere in the path", () => {
+        const matcher = compileIgnoreMatcher(["e2e/**/tmp"]);
+        expect(matcher("e2e/01/tmp")).toBe(true);
+        expect(matcher("e2e/20/nested/tmp")).toBe(true);
+        expect(matcher("e2e/01/other")).toBe(false);
+        expect(matcher("src/e2e/tmp")).toBe(false);
+    });
+
+    test("strips a leading anchor so `/foo` and `./foo` behave as `foo`", () => {
+        const slashMatcher = compileIgnoreMatcher(["/dist"]);
+        expect(slashMatcher("dist")).toBe(true);
+        const dotSlashMatcher = compileIgnoreMatcher(["./dist"]);
+        expect(dotSlashMatcher("dist")).toBe(true);
+    });
+
+    test("multiple patterns are OR'd together", () => {
+        const matcher = compileIgnoreMatcher(["dist", "e2e/**/tmp", "build"]);
+        expect(matcher("dist")).toBe(true);
+        expect(matcher("build")).toBe(true);
+        expect(matcher("e2e/x/tmp")).toBe(true);
+        expect(matcher("src")).toBe(false);
+    });
+});
+
+describe("loadProjectRootIgnorePatterns", () => {
+    let tempArea: TempArea;
+
+    beforeEach(async () => {
+        tempArea = await makeTempArea();
+    });
+
+    afterEach(async () => {
+        await cleanupTempArea(tempArea);
+    });
+
+    test("returns the parsed ignore list from the project root config", async () => {
+        const yamlText: string = [
+            "ignore:",
+            "  - 'e2e/**/tmp'",
+            "  - dist",
+            "triggers: []",
+            "",
+        ].join("\n");
+        const rootConfig: string = path.join(tempArea.rootDir, ".claude", "claude-tools-runner.yaml");
+        await writeFileEnsuringDirs(rootConfig, yamlText);
+
+        expect(await loadProjectRootIgnorePatterns(tempArea.rootDir)).toEqual(["e2e/**/tmp", "dist"]);
+    });
+
+    test("returns [] when the project root config is missing", async () => {
+        expect(await loadProjectRootIgnorePatterns(tempArea.rootDir)).toEqual([]);
+    });
+
+    test("returns [] when the project root config has no `ignore` key", async () => {
+        const rootConfig: string = path.join(tempArea.rootDir, ".claude", "claude-tools-runner.yaml");
+        await writeFileEnsuringDirs(rootConfig, "triggers: []\n");
+        expect(await loadProjectRootIgnorePatterns(tempArea.rootDir)).toEqual([]);
+    });
+
+    test("swallows parse errors and returns [] (the FileLayer load surfaces the error later)", async () => {
+        const rootConfig: string = path.join(tempArea.rootDir, ".claude", "claude-tools-runner.yaml");
+        await writeFileEnsuringDirs(rootConfig, "triggers: [\nbroken yaml here");
+        expect(await loadProjectRootIgnorePatterns(tempArea.rootDir)).toEqual([]);
+    });
 });
 
 describe("shouldRecurseInto", () => {
@@ -563,7 +700,7 @@ describe("scanDirectoryRecursive", () => {
         await writeFileEnsuringDirs(secondConfig, "triggers: []\n");
 
         const collected: string[] = [];
-        await scanDirectoryRecursive(tempArea.rootDir, collected);
+        await scanDirectoryRecursive(tempArea.rootDir, tempArea.rootDir, collected, () => false);
         const sortedCollected: string[] = [...collected].sort();
         expect(sortedCollected).toEqual([firstConfig, secondConfig].sort());
     });
@@ -576,7 +713,7 @@ describe("scanDirectoryRecursive", () => {
         await writeFileEnsuringDirs(secondConfig, "triggers: []\n");
 
         const collected: string[] = [];
-        await scanDirectoryRecursive(tempArea.rootDir, collected);
+        await scanDirectoryRecursive(tempArea.rootDir, tempArea.rootDir, collected, () => false);
         expect(collected.length).toBe(2);
         expect(collected).toContain(firstConfig);
         expect(collected).toContain(secondConfig);
@@ -588,7 +725,7 @@ describe("scanDirectoryRecursive", () => {
         await fs.mkdir(trapPath, { recursive: true });
 
         const collected: string[] = [];
-        await scanDirectoryRecursive(tempArea.rootDir, collected);
+        await scanDirectoryRecursive(tempArea.rootDir, tempArea.rootDir, collected, () => false);
         expect(collected).toEqual([]);
     });
 });

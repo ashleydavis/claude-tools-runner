@@ -13,8 +13,9 @@ Each configuration file gets its own state and output directory, sitting next to
 
 ## Schema reference
 
-Each YAML file has one top-level key: `triggers`.
+Each YAML file has two top-level keys: `triggers` (required, may be empty) and `ignore` (optional). Any other top-level key is rejected.
 
+- **`ignore`**: list of strings, optional. Glob patterns matched against project-relative POSIX directory paths during the recursive config scan. Subdirectories matching any pattern are pruned wholesale (the scanner never descends into them, so configs they contain are never loaded). Only the project root config's `ignore` list is consulted; nested configs cannot exclude others' subtrees. Patterns use the same picomatch syntax as `paths` (a leading `./` or `/` is stripped). Typical use: `e2e/**/tmp` to skip smoke-test fixtures, `dist`, `build`, etc.
 - **`triggers`**: list, required (may be empty). An empty list is valid (the file is in place but quiet).
   - **`paths`**: list of strings, optional (may be missing or empty). [picomatch](https://github.com/micromatch/picomatch) glob patterns applied to POSIX paths relative to the config file's directory (`scopeDir`). A trigger fires if any changed file matches any pattern. An empty or absent `paths` list is not an error: the trigger simply never fires. Negations (`!`) exclude. Brace expansion (`*.{ts,tsx}`) is supported. Case-sensitive.
   - **`group_by`**: string, optional. A glob pattern that defines a "group" directory per matched file. When set, files whose paths share the same `group_by` match are treated as one group, and the `${{group_dir}}` variable becomes available in `run` and `cwd`. See "Grouping" below. Example: `packages/*/` (per-package), `apps/*/` (per-app), `*/` (per-top-level-directory). The trailing `/` is conventional shorthand for "directory" and optional: `packages/*` works identically.
@@ -142,7 +143,23 @@ triggers:
 
 `group_by: packages/*/` tells the runner to group matched files by their `packages/<name>/` directory, and `${{group_dir}}` expands to that directory's absolute path. So a change to `packages/foo/src/lib/util.ts` runs `bun run build` in `packages/foo/`. If files in two different packages change in the same Stop event, both packages get rebuilt: one invocation each. Each invocation has its own cooldown state, keyed by the resolved `(run, cwd)` pair.
 
-### 4. Home + project, layered
+### 4. Pruning subtrees with `ignore`
+
+```yaml
+# <project>/.claude/claude-tools-runner.yaml
+ignore:
+  - "e2e/**/tmp"
+  - dist
+triggers:
+  - paths:
+      - src/**/*.ts
+    commands:
+      - run: bun run test
+```
+
+The recursive scanner walks the project tree looking for `.claude/claude-tools-runner.yaml` files. With `ignore` set, any subdirectory whose project-relative path matches one of the listed globs is pruned before descent: configs (and changed files) inside it are never seen by the hook. Useful when smoke-test fixtures, build outputs, or vendored worktrees contain their own `.claude/` directories you don't want loaded. Only the project root config's `ignore` list applies; nested configs declare their own subtrees but cannot exclude others'.
+
+### 5. Home + project, layered
 
 `~/.claude/claude-tools-runner.yaml`:
 

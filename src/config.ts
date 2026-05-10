@@ -1,12 +1,14 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import picomatch from "picomatch";
 import * as YAML from "yaml";
 import { isMap, isScalar, isSeq, YAMLMap } from "yaml";
 import { parseDuration } from "./duration";
+import { stripLeadingAnchor } from "./matcher";
 import { CommandConfig, Config, Trigger } from "./types";
 
 // Top-level YAML keys accepted by the config schema. Any other top-level key is rejected with a validation error.
-const ALLOWED_TOP_LEVEL_KEYS: readonly string[] = ["triggers"];
+const ALLOWED_TOP_LEVEL_KEYS: readonly string[] = ["triggers", "ignore"];
 
 // Directory names that are unconditionally skipped during recursive `scanConfigFiles` traversal.
 // `.git` and `.cache` are dot-directories already excluded by the dot-prefix rule, but listing them explicitly here
@@ -64,8 +66,26 @@ export async function loadConfigFile(filePath: string): Promise<Config | null> {
         }
     }
 
+    let parsedIgnore: string[] | undefined = undefined;
+    if (plainData.ignore !== undefined && plainData.ignore !== null) {
+        if (!Array.isArray(plainData.ignore)) {
+            throw new Error("ignore must be a YAML sequence (array) of glob strings");
+        }
+        for (let ignoreIndex = 0; ignoreIndex < plainData.ignore.length; ignoreIndex++) {
+            const ignoreEntry = plainData.ignore[ignoreIndex];
+            if (typeof ignoreEntry !== "string" || ignoreEntry.length === 0) {
+                throw new Error(`ignore[${ignoreIndex}] must be a non-empty string`);
+            }
+        }
+        parsedIgnore = plainData.ignore;
+    }
+
     if (!plainData.triggers) {
-        return { triggers: [] };
+        const emptyResult: Config = { triggers: [] };
+        if (parsedIgnore !== undefined) {
+            emptyResult.ignore = parsedIgnore;
+        }
+        return emptyResult;
     }
 
     if (!Array.isArray(plainData.triggers)) {
@@ -83,7 +103,11 @@ export async function loadConfigFile(filePath: string): Promise<Config | null> {
         const parsedTrigger = parseTrigger(rawTrigger, triggerIndex, sourceLine, commandSourceLines);
         triggers.push(parsedTrigger);
     }
-    return { triggers };
+    const result: Config = { triggers };
+    if (parsedIgnore !== undefined) {
+        result.ignore = parsedIgnore;
+    }
+    return result;
 }
 
 // Walks the YAML node tree and returns, for each trigger by index, an array of 1-based line numbers
@@ -135,14 +159,65 @@ export function computeCommandSourceLinesByTrigger(rootMap: YAMLMap, sourceText:
     return result;
 }
 
+// Compiled directory-path matcher used to skip subtrees during the recursive config scan. Receives a
+// project-relative POSIX directory path (e.g. `e2e/20-yaml-parse-error/tmp`) and returns true when the
+// path matches one of the user-supplied `ignore` globs.
+type CompiledIgnoreMatcher = (relativeDirPath: string) => boolean;
+
+// Compiles the project root config's `ignore` glob list into a single matcher function. Patterns are
+// project-relative POSIX globs interpreted by picomatch with `dot: true`; a leading `./` or `/` anchor is
+// stripped so users can write the same forms accepted by `paths:`. Returns a no-op matcher when `patterns`
+// is undefined or empty.
+export function compileIgnoreMatcher(patterns: string[] | undefined): CompiledIgnoreMatcher {
+    if (patterns === undefined || patterns.length === 0) {
+        return () => false;
+    }
+    const compiledMatchers: ((candidate: string) => boolean)[] = [];
+    for (const rawPattern of patterns) {
+        const normalizedPattern = stripLeadingAnchor(rawPattern);
+        compiledMatchers.push(picomatch(normalizedPattern, { dot: true }));
+    }
+    return (relativeDirPath: string) => {
+        for (const compiledMatcher of compiledMatchers) {
+            if (compiledMatcher(relativeDirPath)) {
+                return true;
+            }
+        }
+        return false;
+    };
+}
+
 // Recursively walks `projectDir` and returns absolute paths to every `.claude/claude-tools-runner.yaml` file found.
 // Skips `node_modules/`, `.git/`, `.cache/`, and any directory whose name starts with `.` other than `.claude`.
-// The returned list is sorted lexicographically so the discovery order is deterministic across runs.
-export async function scanConfigFiles(projectDir: string): Promise<string[]> {
+// When `ignorePatterns` is non-empty, also skips any subdirectory whose project-relative POSIX path matches
+// one of the supplied globs (compiled via `compileIgnoreMatcher`). The returned list is sorted lexicographically
+// so the discovery order is deterministic across runs.
+export async function scanConfigFiles(projectDir: string, ignorePatterns?: string[]): Promise<string[]> {
     const results: string[] = [];
-    await scanDirectoryRecursive(projectDir, results);
+    const isIgnored = compileIgnoreMatcher(ignorePatterns);
+    await scanDirectoryRecursive(projectDir, projectDir, results, isIgnored);
     results.sort();
     return results;
+}
+
+// Reads the project root's `${projectDir}/.claude/claude-tools-runner.yaml` and returns its `ignore` glob
+// list, or an empty array when the file is missing, has no `ignore` key, or fails to parse. The scanner
+// uses this list to prune subtrees before any other config is loaded; the same file is loaded again later
+// through the normal `FileLayer.create` path, where any parse error surfaces as a `hook_error` audit entry,
+// so swallowing the error here just defers reporting rather than hiding it.
+export async function loadProjectRootIgnorePatterns(projectDir: string): Promise<string[]> {
+    const rootConfigPath = path.join(projectDir, ".claude", "claude-tools-runner.yaml");
+    let rootConfig: Config | null;
+    try {
+        rootConfig = await loadConfigFile(rootConfigPath);
+    }
+    catch {
+        return [];
+    }
+    if (rootConfig === null || rootConfig.ignore === undefined) {
+        return [];
+    }
+    return rootConfig.ignore;
 }
 
 // Returns the absolute path to the home-level `claude-tools-runner.yaml`, or null if `$HOME` is unset.
@@ -161,8 +236,10 @@ export function homeConfigPath(): string | null {
 export const HOME_DISPLAY_PATH: string = "~/.claude/claude-tools-runner.yaml";
 
 // Walks one directory, recording any `.claude/claude-tools-runner.yaml` it contains and recursing into eligible subdirectories.
-// `results` is mutated in place. Subdirectory names are filtered by `shouldRecurseInto` before recursion.
-export async function scanDirectoryRecursive(currentDir: string, results: string[]): Promise<void> {
+// `results` is mutated in place. Subdirectory names are filtered by `shouldRecurseInto`; the project-relative
+// POSIX path of each candidate is then checked against `isIgnored` so the project root config's `ignore`
+// globs can prune subtrees (e.g. `e2e/**/tmp`).
+export async function scanDirectoryRecursive(projectDir: string, currentDir: string, results: string[], isIgnored: CompiledIgnoreMatcher): Promise<void> {
     const entries = await fs.readdir(currentDir, { withFileTypes: true });
     for (const entry of entries) {
         if (!entry.isDirectory()) {
@@ -188,7 +265,12 @@ export async function scanDirectoryRecursive(currentDir: string, results: string
         if (!shouldRecurseInto(dirName)) {
             continue;
         }
-        await scanDirectoryRecursive(path.join(currentDir, dirName), results);
+        const childAbsoluteDir = path.join(currentDir, dirName);
+        const childRelativeDir = path.relative(projectDir, childAbsoluteDir).split(path.sep).join("/");
+        if (childRelativeDir.length > 0 && isIgnored(childRelativeDir)) {
+            continue;
+        }
+        await scanDirectoryRecursive(projectDir, childAbsoluteDir, results, isIgnored);
     }
 }
 

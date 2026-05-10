@@ -100,6 +100,8 @@ Nested repos in scenarios like a parent with two child repos each get their own 
 
 The hook scans downward from `$CLAUDE_PROJECT_DIR` for every file matching the pattern `**/.claude/claude-tools-runner.yaml`. Each found file becomes a layer, scoped to its own directory. The home config (`~/.claude/claude-tools-runner.yaml`) is always loaded as an additional layer regardless of what the scan finds.
 
+Before recursion, the hook reads the project root config's optional `ignore` glob list and uses it to prune subdirectories whose project-relative POSIX path matches any pattern. The scanner never descends into pruned subtrees, so configs inside them are never loaded and changed files inside them are never seen. Only the project root's `ignore` list applies to the scan; nested configs may declare their own `ignore` for their own purposes but cannot influence siblings. The standard hard-coded skips (`node_modules/`, `.git/`, `.cache/`, dot-prefixed directories other than `.claude`) still apply unconditionally and need not be repeated in `ignore`.
+
 If `git` is not on `$PATH`, the spawn returns ENOENT via the `error` event and the hook logs `[tools-runner] git binary not found on PATH, skipping` and exits 0.
 
 ## Changed-file collection

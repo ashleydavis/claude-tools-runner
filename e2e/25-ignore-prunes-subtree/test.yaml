@@ -1,0 +1,27 @@
+description: "ignore: globs prune subtrees so a malformed nested config does not surface"
+
+setup:
+  git_init:
+    - "."
+  files:
+    .claude/claude-tools-runner.yaml: |
+      ignore:
+        - "fixtures/**/tmp"
+      triggers:
+        - paths:
+            - "src/*.txt"
+          commands:
+            - run: "echo OK > root.out"
+    fixtures/scenario-a/tmp/.claude/claude-tools-runner.yaml: |
+      triggers: [ { paths: ["**/*.ts"], commands: [
+    fixtures/scenario-a/tmp/src/leak.ts: ""
+    src/file.txt: ""
+
+steps:
+  - description: "root command runs; malformed config inside ignored subtree is never loaded (exit 0 instead of the parse-error exit 1)"
+    expect:
+      exit: 0
+      file_exists:
+        - root.out
+      stdout_substrings:
+        - "loaded .claude/claude-tools-runner.yaml"

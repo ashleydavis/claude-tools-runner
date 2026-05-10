@@ -1,6 +1,6 @@
 import * as path from "node:path";
 import { FileAuditLogger, HookSkipReason, IAuditLogger, MultiLayerLogger, NullAuditLogger, createLogger, resolveLogBaseDir, toLocalISOString } from "./audit-log";
-import { HOME_DISPLAY_PATH, homeConfigPath, scanConfigFiles } from "./config";
+import { HOME_DISPLAY_PATH, homeConfigPath, loadProjectRootIgnorePatterns, scanConfigFiles } from "./config";
 import { collectChangedFiles } from "./git";
 import { hashesPath, loadState, runsDir, SaveStateResult, saveState } from "./state";
 import { runCommands, RunResult } from "./runner";
@@ -167,9 +167,10 @@ export async function runStopHook(): Promise<void> {
     }
 
     const homeDir = process.env["HOME"] ?? "";
+    const rootIgnorePatterns = await loadProjectRootIgnorePatterns(projectDir);
     let configFilePaths: string[];
     try {
-        configFilePaths = await scanConfigFiles(projectDir);
+        configFilePaths = await scanConfigFiles(projectDir, rootIgnorePatterns);
     }
     catch (caughtErr) {
         process.stderr.write(`[tools-runner] failed to scan for config files: ${(caughtErr as Error).message}\n`);

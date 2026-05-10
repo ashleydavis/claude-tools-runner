@@ -2,6 +2,8 @@
 export interface Config {
     // The triggers declared in this YAML file. May be empty (a layer with no triggers is valid: it simply contributes nothing).
     triggers: Trigger[];
+    // Optional glob list of directories (project-relative POSIX paths) the recursive config scanner should not descend into. Matched against each candidate subdirectory's project-relative path during `scanConfigFiles`. Only the project-root config's `ignore` list is consulted; nested configs declare their own subtrees but cannot exclude others'.
+    ignore?: string[];
 }
 
 // A single trigger node from a YAML config. Pairs a set of glob patterns with the commands to run when matching files change.
