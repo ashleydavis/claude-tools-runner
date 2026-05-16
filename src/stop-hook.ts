@@ -91,7 +91,7 @@ export async function runStopHook(): Promise<void> {
             return;
         }
         await logger.log({
-            type: "hook_completed",
+            type: "EXIT",
             timestamp: toLocalISOString(new Date()),
             durationMs: Date.now() - startedAt,
             pass: passCount,
@@ -139,7 +139,7 @@ export async function runStopHook(): Promise<void> {
                 const earlyLogger = await createLogger(earlyProjectDir, now);
                 logger = earlyLogger;
                 await logger.log({
-                    type: "hook_started",
+                    type: "ENTRY",
                     timestamp: toLocalISOString(now),
                     cwd: process.cwd(),
                     projectDir: earlyProjectDir,
@@ -231,7 +231,7 @@ export async function runStopHook(): Promise<void> {
     logger = new MultiLayerLogger(loggerMap);
 
     await logger.log({
-        type: "hook_started",
+        type: "ENTRY",
         timestamp: toLocalISOString(now),
         cwd: process.cwd(),
         projectDir,
@@ -262,7 +262,7 @@ export async function runStopHook(): Promise<void> {
             const layerRunsDir = slot.hasFileBackedState ? runsDir(slot.scopeDir) : "";
             const layerLogBaseDir = slot.hasFileBackedState ? resolveLogBaseDir(slot.scopeDir) : "";
             await logger.log({
-                type: "config_load",
+                type: "CONFIG",
                 timestamp: toLocalISOString(new Date()),
                 filePath: slot.displayPath,
                 triggerCount: slot.layer.triggerCount(),
@@ -324,7 +324,7 @@ export async function runStopHook(): Promise<void> {
 
         const sortedChanged = homeChanged.slice().sort((leftFile, rightFile) => leftFile.path.localeCompare(rightFile.path));
         await logger.log({
-            type: "changed_files",
+            type: "CHANGE",
             timestamp: toLocalISOString(new Date()),
             count: sortedChanged.length,
             files: sortedChanged.map(file => ({ path: file.path })),
@@ -343,7 +343,7 @@ export async function runStopHook(): Promise<void> {
             const layerChanged = perLayerChanged.get(slot.displayPath) ?? [];
             for (const matchInfo of slot.layer.evaluateMatches(layerChanged)) {
                 await logger.log({
-                    type: "trigger_match",
+                    type: "MATCH",
                     timestamp: toLocalISOString(new Date()),
                     sourceFile: matchInfo.sourceFile,
                     sourceLine: matchInfo.sourceLine,
@@ -428,7 +428,7 @@ export async function runStopHook(): Promise<void> {
                 throw new HookHandledError(message, saveErr.stack);
             }
             await logger.log({
-                type: "state_saved",
+                type: "STATE_SAVED",
                 timestamp: toLocalISOString(new Date()),
                 sourceFile: slot.displayPath,
                 hashesPath: hashesPath(slot.scopeDir),
@@ -475,7 +475,7 @@ export async function runStopHook(): Promise<void> {
     catch (caughtErr) {
         const err = caughtErr as Error;
         await logger.log({
-            type: "hook_error",
+            type: "ERROR",
             timestamp: toLocalISOString(new Date()),
             message: err.message,
             stack: err.stack,

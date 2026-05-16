@@ -95,8 +95,7 @@ describe("decideGate", () => {
 
         const decision = await decideGate(prepared, state, now);
 
-        expect(decision.run).toBe(true);
-        expect(decision.reason).toBe("first run");
+        expect(decision.type).toBe("GATE_RUN");
         expect(decision.filesHash).toMatch(/^[0-9a-f]{64}$/);
     });
 
@@ -110,8 +109,7 @@ describe("decideGate", () => {
 
         const decision = await decideGate(prepared, state, now);
 
-        expect(decision.run).toBe(false);
-        expect(decision.reason).toBe("in cooldown");
+        expect(decision.type).toBe("COOLDOWN");
     });
 
     test("counts a negative elapsed (now before lastRunAt) as in cooldown", async () => {
@@ -124,8 +122,7 @@ describe("decideGate", () => {
 
         const decision = await decideGate(prepared, state, now);
 
-        expect(decision.run).toBe(false);
-        expect(decision.reason).toBe("in cooldown");
+        expect(decision.type).toBe("COOLDOWN");
     });
 
     test("returns skip with reason 'no file changes since last successful run' when cooldown expired and hash matches", async () => {
@@ -139,8 +136,7 @@ describe("decideGate", () => {
 
         const decision = await decideGate(prepared, state, now);
 
-        expect(decision.run).toBe(false);
-        expect(decision.reason).toBe("no file changes since last successful run");
+        expect(decision.type).toBe("UNCHANGED");
         expect(decision.filesHash).toBe(currentFilesHash);
     });
 
@@ -154,8 +150,7 @@ describe("decideGate", () => {
 
         const decision = await decideGate(prepared, state, now);
 
-        expect(decision.run).toBe(true);
-        expect(decision.reason).toBe("files changed since last run");
+        expect(decision.type).toBe("GATE_RUN");
         expect(decision.filesHash).not.toBe("differentPriorHashValue");
         expect(decision.filesHash).toMatch(/^[0-9a-f]{64}$/);
     });
@@ -175,8 +170,7 @@ describe("decideGate", () => {
         try {
             const decision = await decideGate(prepared, state, now);
 
-            expect(decision.run).toBe(true);
-            expect(decision.reason).toBe("first run");
+            expect(decision.type).toBe("GATE_RUN");
             expect(writtenChunks.length).toBe(1);
             expect(writtenChunks[0]).toBe(`[tools-runner] ${prepared.sourceFile} cmd ${prepared.commandIndex}: invalid lastRunAt "not-a-date", treating as first run\n`);
         }

@@ -29,11 +29,6 @@ export function toLocalISOString(value: Date): string {
 // hook; the JSON consumer can grep by this value to count how often a given skip path fires.
 export type HookSkipReason = "stop_hook_active" | "git_missing" | "env_unset" | "no_triggers" | "no_changed_files" | "no_match";
 
-// Outcome of a single command emitted in `command_result` audit entries. Mirrors the user-visible PASS/FAIL
-// stdout taxonomy: a successful exit is "pass", a non-zero exit (including spawn errors) is "fail", and a
-// timeout is its own category so it can be filtered separately.
-export type AuditCommandOutcome = "pass" | "fail" | "timeout";
-
 // Common prefix carried by every audit-log entry. The `type` discriminator lets a JSON consumer switch on
 // the entry shape; the `timestamp` is a local-ISO-8601 string set at emission time.
 export interface IAuditEntryBase {
@@ -46,7 +41,7 @@ export interface IAuditEntryBase {
 // Emitted once at the top of each Stop-hook invocation, immediately after stdin is parsed. Pairs with a
 // closing `hook_completed` entry (or, on a fatal error, with a `hook_error` entry).
 export interface IAuditHookStartedEntry extends IAuditEntryBase {
-    type: "hook_started";
+    type: "ENTRY";
     // `process.cwd()` at the time the hook started.
     cwd: string;
     // Value of `$CLAUDE_PROJECT_DIR`. Recorded explicitly so the audit log shows the working context.
@@ -60,7 +55,7 @@ export interface IAuditHookStartedEntry extends IAuditEntryBase {
 // Emitted after each `FileLayer.create(...)` resolves successfully. A failure to load a layer is reported via
 // `hook_error` instead, after which the hook aborts.
 export interface IAuditConfigLoadEntry extends IAuditEntryBase {
-    type: "config_load";
+    type: "CONFIG";
     // Display path of the YAML file (e.g. `~/.claude/claude-tools-runner.yaml` or a project-relative path).
     filePath: string;
     // Number of triggers parsed out of the file. Zero is a valid value (the layer simply contributes nothing).
@@ -85,7 +80,7 @@ export interface IAuditChangedFile {
 // Emitted once after all `collectChangedFiles` calls complete. Even an empty list produces an entry: the
 // downstream "no changed files, skipping" path then fires.
 export interface IAuditChangedFilesEntry extends IAuditEntryBase {
-    type: "changed_files";
+    type: "CHANGE";
     // Total number of changed files across every scope. Equals `files.length`.
     count: number;
     // The full sorted list of changed files. Sorted so the JSON output is stable across invocations.
@@ -95,7 +90,7 @@ export interface IAuditChangedFilesEntry extends IAuditEntryBase {
 // Emitted once per trigger evaluated, regardless of whether anything matched. The matched/unmatched split
 // answers "why didn't my trigger fire?" without instrumenting the plugin.
 export interface IAuditTriggerMatchEntry extends IAuditEntryBase {
-    type: "trigger_match";
+    type: "MATCH";
     // Display path of the YAML layer this trigger came from.
     sourceFile: string;
     // 1-based line of the trigger inside `sourceFile`. Renders as an editor-jump prefix in the text log.
@@ -110,10 +105,12 @@ export interface IAuditTriggerMatchEntry extends IAuditEntryBase {
     unmatchedFiles: string[];
 }
 
-// Emitted once per `CompiledCommand`, after `decideGate` resolves but before any spawn. Carries enough
-// context to explain why the gate decided "run" or "skip" on a per-command basis.
+// Emitted once per `CompiledCommand`, after `decideGate` resolves but before any spawn. The `type`
+// discriminator IS the user-facing label and encodes the gate outcome: `GATE_RUN` is the JSON-only
+// "decided to run" case; `COOLDOWN`, `UNCHANGED`, and `SKIP` are the three text-log skip variants
+// branched by reason so each skip cause is greppable.
 export interface IAuditGateDecisionEntry extends IAuditEntryBase {
-    type: "gate_decision";
+    type: "GATE_RUN" | "COOLDOWN" | "UNCHANGED" | "SKIP";
     // Display path of the YAML layer that produced this command.
     sourceFile: string;
     // 1-based line of the source trigger inside `sourceFile`.
@@ -128,16 +125,13 @@ export interface IAuditGateDecisionEntry extends IAuditEntryBase {
     expandedCwd: string;
     // SHA-256 hex digest of the matched files at gate-decision time.
     filesHash: string;
-    // Persisted hash from the previous successful run, if any.
+    // Persisted hash from the previous successful run, if any. JSON consumers can use the
+    // present-but-different vs absent distinction to disambiguate `GATE_RUN` first-run from changed-run.
     lastFilesHash?: string;
     // Effective cooldown threshold in seconds (defaulted to 60 when the YAML did not specify one).
     cooldownSeconds: number;
     // Wall-clock seconds elapsed since the previous successful run, if any.
     elapsedSeconds?: number;
-    // Whether the gate decided to run or skip the command on this Stop event.
-    decision: "run" | "skip";
-    // Human-readable rationale for the decision (e.g. "first run", "in cooldown").
-    reason: string;
 }
 
 // Emitted (and flushed to disk) immediately before the child process is spawned. Pairs with a later
@@ -146,7 +140,7 @@ export interface IAuditGateDecisionEntry extends IAuditEntryBase {
 // itself dies between this entry and `command_started`, the log still shows that the command was about to
 // run. Carries no pid (the child has not been forked yet).
 export interface IAuditCommandAboutToRunEntry extends IAuditEntryBase {
-    type: "command_about_to_run";
+    type: "LAUNCHING";
     // Display path of the YAML layer that produced this command.
     sourceFile: string;
     // 1-based line of the source trigger.
@@ -168,7 +162,7 @@ export interface IAuditCommandAboutToRunEntry extends IAuditEntryBase {
 // Emitted once per command actually spawned (gate decided `run`). Pairs with a `command_result` entry
 // carrying the same `sourceFile`/`sourceLine`/`commandIndex` triple.
 export interface IAuditCommandStartedEntry extends IAuditEntryBase {
-    type: "command_started";
+    type: "STARTED";
     // Display path of the YAML layer that produced this command.
     sourceFile: string;
     // 1-based line of the source trigger.
@@ -189,10 +183,11 @@ export interface IAuditCommandStartedEntry extends IAuditEntryBase {
     logFile: string;
 }
 
-// Emitted once per command that completed (success, failure, or timeout). Carries the outcome bucket plus
-// raw exit code and duration so a JSON consumer can compute its own statistics.
+// Emitted once per command that completed (success, failure, or timeout). The `type` discriminator IS
+// the user-facing label and encodes the outcome: `PASS` for a clean exit-0, `FAIL` for any non-zero exit
+// (including spawn error), `TIMEOUT` for a per-command timeout kill.
 export interface IAuditCommandResultEntry extends IAuditEntryBase {
-    type: "command_result";
+    type: "PASS" | "FAIL" | "TIMEOUT";
     // Display path of the YAML layer that produced this command.
     sourceFile: string;
     // 1-based line of the source trigger.
@@ -205,20 +200,26 @@ export interface IAuditCommandResultEntry extends IAuditEntryBase {
     expandedRun: string;
     // Fully template-expanded working directory.
     expandedCwd: string;
+    // OS process id of the spawned child. Matches the paired `STARTED.pid` so the start and end of one
+    // child can be correlated by pid in the text log. `null` when the spawn errored before the `spawn`
+    // event fired (no child was ever forked).
+    pid: number | null;
     // Numeric exit code: actual code on a clean exit, `-1` for timeout or spawn error.
     exitCode: number;
     // Wall-clock duration in milliseconds from spawn to exit (or timeout/spawn-error rejection).
     durationMs: number;
-    // Outcome bucket: `pass` for exit 0, `fail` for any non-zero exit (including spawn error), `timeout`.
-    outcome: AuditCommandOutcome;
-    // Absolute path of the per-command log file (same as the paired `command_started.logFile`).
+    // Diagnostic message captured when the spawn itself errored (e.g. ENOENT on the shell, EACCES,
+    // out of memory) or when `proc.exited` rejected. Absent on the happy path and on a clean non-zero
+    // exit (in which case the child's own stderr is in the per-command log file pointed at by `logFile`).
+    error?: string;
+    // Absolute path of the per-command log file (same as the paired `STARTED.logFile`).
     logFile: string;
 }
 
 // Emitted once after `saveState` resolves, before `hook_completed`. The pruning counts come from `saveState`
 // itself; the cardinality fields are post-prune so they reflect what was actually written.
 export interface IAuditStateSavedEntry extends IAuditEntryBase {
-    type: "state_saved";
+    type: "STATE_SAVED";
     // Display path of the YAML layer this state save corresponds to.
     sourceFile: string;
     // Absolute path of the per-layer hash cache YAML (`.claude/claude-tools-runner/hashes.yaml`).
@@ -240,7 +241,7 @@ export interface IAuditStateSavedEntry extends IAuditEntryBase {
 // `hook_error` followed by `process.exit(1)` the completed entry may not get written; that absence is itself
 // a useful signal.
 export interface IAuditHookCompletedEntry extends IAuditEntryBase {
-    type: "hook_completed";
+    type: "EXIT";
     // Wall-clock duration of the hook in milliseconds, measured from the top of `runStopHook`.
     durationMs: number;
     // Number of commands that exited cleanly.
@@ -260,7 +261,7 @@ export interface IAuditHookCompletedEntry extends IAuditEntryBase {
 // Emitted by the top-level `try/catch` when an unhandled exception escapes the hook body. Followed (best
 // effort) by a `hook_completed` entry with `exitCode: 2`.
 export interface IAuditHookErrorEntry extends IAuditEntryBase {
-    type: "hook_error";
+    type: "ERROR";
     // Error message (`Error.message`) of the unhandled exception.
     message: string;
     // Stack trace captured at throw time. Omitted when the thrown value did not carry a stack.
@@ -338,69 +339,19 @@ export function resolveCommandLogDir(baseDir: string, now: Date): string {
 }
 
 // Renders `entry` as a single human-readable line for the `.log` companion of the JSON audit log. Returns
-// `null` for entry variants that exist only in the JSON log (`hook_started`, `state_saved`,
-// `hook_completed`, and the `decision: "run"` case of `gate_decision`); callers must skip the text append
-// in that case. The format is `HH:MM:SS  LABEL      <details>` (label column padded to 11). The surfaced
-// labels match the user-facing audit-log spec (CONFIG, CHANGE, MATCH, COOLDOWN, UNCHANGED, LAUNCHING,
-// STARTED, PASS, FAIL, TIMEOUT, ERROR). `<sourceFile>:<sourceLine>` prefixes are formatted like
-// editor-jump locations and point at the command's `run:` line for command-level entries.
+// `null` for entry variants that exist only in the JSON log (`STATE_SAVED`, `GATE_RUN`); callers must skip
+// the text append in that case. The format is `HH:MM:SS  LABEL      <details>` (label column padded to 11).
+// `entry.type` IS the user-facing label (CONFIG, CHANGE, MATCH, COOLDOWN, UNCHANGED, SKIP, LAUNCHING,
+// STARTED, PASS, FAIL, TIMEOUT, ENTRY, EXIT, ERROR). `<sourceFile>:<sourceLine>` prefixes are
+// formatted like editor-jump locations and point at the command's `run:` line for command-level entries.
 export function formatTextEntry(entry: IAuditLogEntry): string | null {
     const body = renderEntryBody(entry);
     if (body === null) {
         return null;
     }
     const timeOnly = entry.timestamp.length >= 19 ? entry.timestamp.slice(11, 19) : entry.timestamp;
-    const label = labelFor(entry).padEnd(11);
+    const label = entry.type.padEnd(11);
     return `${timeOnly}  ${label}${body}`;
-}
-
-// Returns the column label for `entry`. The labels are the user-facing audit-log spec:
-// CONFIG (a config file was loaded), CHANGE (the changed-file scan), MATCH (per-trigger match results),
-// COOLDOWN / UNCHANGED (a command was gate-skipped, branched by reason so each skip cause is greppable),
-// LAUNCHING (a command is about to be spawned; emitted and flushed before the fork), STARTED (a command
-// has been spawned and is now running, carrying the child pid), PASS / FAIL / TIMEOUT (a command exited
-// or timed out, branched by outcome so the end-of-command line is greppable), ERROR (a fatal hook error).
-// `hook_started`, `state_saved`, `hook_completed`, and the `decision: "run"` case of `gate_decision`
-// exist in the JSON log only and `formatTextEntry` short-circuits on them, so callers should not see
-// this function asked to label them.
-export function labelFor(entry: IAuditLogEntry): string {
-    if (entry.type === "config_load") {
-        return "CONFIG";
-    }
-    if (entry.type === "changed_files") {
-        return "CHANGE";
-    }
-    if (entry.type === "trigger_match") {
-        return "MATCH";
-    }
-    if (entry.type === "gate_decision") {
-        if (entry.reason === "in cooldown") {
-            return "COOLDOWN";
-        }
-        if (entry.reason === "no file changes since last successful run") {
-            return "UNCHANGED";
-        }
-        return "SKIP";
-    }
-    if (entry.type === "command_about_to_run") {
-        return "LAUNCHING";
-    }
-    if (entry.type === "command_started") {
-        return "STARTED";
-    }
-    if (entry.type === "command_result") {
-        if (entry.outcome === "pass") {
-            return "PASS";
-        }
-        if (entry.outcome === "fail") {
-            return "FAIL";
-        }
-        return "TIMEOUT";
-    }
-    if (entry.type === "hook_error") {
-        return "ERROR";
-    }
-    return entry.type.toUpperCase();
 }
 
 // Maximum number of characters of file-list content to inline in the human-readable text log. Longer
@@ -409,7 +360,7 @@ export function labelFor(entry: IAuditLogEntry): string {
 const FILE_LIST_TEXT_BUDGET: number = 200;
 
 // Truncates `fullList` to at most `FILE_LIST_TEXT_BUDGET` characters with a trailing ellipsis when it
-// exceeds the budget. Used by `FILE` and `MATCH` lines so a Stop event affecting hundreds of files does
+// exceeds the budget. Used by `CHANGE` and `MATCH` lines so a Stop event affecting hundreds of files does
 // not produce a single multi-kilobyte text-log line.
 function truncateFileList(fullList: string): string {
     if (fullList.length > FILE_LIST_TEXT_BUDGET) {
@@ -419,25 +370,27 @@ function truncateFileList(fullList: string): string {
 }
 
 // Routes `entry` to its variant-specific text renderer. Returns `null` for entries that exist only in the
-// JSON log; the text log carries the user-facing chain (`config_load` -> `changed_files` -> `trigger_match`
-// -> `gate_decision` (skip only) | (`command_about_to_run` -> `command_started` -> `command_result`)) plus
-// `hook_error`. `hook_started`, `state_saved`, `hook_completed`, and the `decision: "run"` case of
-// `gate_decision` are JSON-only because the surfaced lines already convey what the user needs (which
-// configs loaded, which files changed, which triggers matched and on what patterns, why a command was
-// skipped, when a command was about to run, when it actually started, and how it finished including
-// exit code or timeout and duration).
+// JSON log; the text log carries the user-facing chain (`ENTRY` -> `CONFIG` -> `CHANGE` -> `MATCH` ->
+// (`COOLDOWN`|`UNCHANGED`|`SKIP`) | (`LAUNCHING` -> `STARTED` -> (`PASS`|`FAIL`|`TIMEOUT`)) -> `EXIT`)
+// plus `ERROR`. `STATE_SAVED` and `GATE_RUN` are JSON-only because the surfaced chain already conveys
+// what the user needs (which configs loaded, which files changed, which triggers matched and on what
+// patterns, why a command was skipped, when a command was about to run, when it actually started, and
+// how it finished including exit code or timeout and duration, plus when the hook started and finished).
 export function renderEntryBody(entry: IAuditLogEntry): string | null {
-    if (entry.type === "config_load") {
+    if (entry.type === "ENTRY") {
+        return entry.projectDir;
+    }
+    if (entry.type === "CONFIG") {
         return entry.filePath;
     }
-    if (entry.type === "changed_files") {
+    if (entry.type === "CHANGE") {
         if (entry.count === 0) {
             return `0 files`;
         }
         const fullList = entry.files.map(file => file.path).join(", ");
         return `${entry.count} files: ${truncateFileList(fullList)}`;
     }
-    if (entry.type === "trigger_match") {
+    if (entry.type === "MATCH") {
         const totalConsidered = entry.matchedFiles.length + entry.unmatchedFiles.length;
         const patternList = entry.patterns.join(",");
         if (entry.matchedFiles.length === 0) {
@@ -446,25 +399,28 @@ export function renderEntryBody(entry: IAuditLogEntry): string | null {
         const matchedList = entry.matchedFiles.join(", ");
         return `${entry.sourceFile}:${entry.sourceLine} patterns=${patternList} matched ${entry.matchedFiles.length}/${totalConsidered}: ${truncateFileList(matchedList)}`;
     }
-    if (entry.type === "gate_decision") {
-        if (entry.decision === "run") {
-            return null;
-        }
-        return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}" ${entry.reason}`;
+    if (entry.type === "GATE_RUN") {
+        return null;
     }
-    if (entry.type === "command_about_to_run") {
+    if (entry.type === "COOLDOWN" || entry.type === "UNCHANGED" || entry.type === "SKIP") {
         return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}"`;
     }
-    if (entry.type === "command_started") {
+    if (entry.type === "LAUNCHING") {
         return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}"`;
     }
-    if (entry.type === "command_result") {
-        if (entry.outcome === "fail") {
-            return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}" exit=${entry.exitCode} ${entry.durationMs}ms`;
-        }
-        return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}" ${entry.durationMs}ms`;
+    if (entry.type === "STARTED") {
+        const pidPart = entry.pid !== null ? ` pid=${entry.pid}` : "";
+        return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}"${pidPart}`;
     }
-    if (entry.type === "hook_error") {
+    if (entry.type === "PASS" || entry.type === "FAIL" || entry.type === "TIMEOUT") {
+        const pidPart = entry.pid !== null ? ` pid=${entry.pid}` : "";
+        const errorPart = entry.error !== undefined ? ` error="${entry.error}"` : "";
+        return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}"${pidPart} exit=${entry.exitCode} ${entry.durationMs}ms${errorPart}`;
+    }
+    if (entry.type === "EXIT") {
+        return `${entry.durationMs}ms pass=${entry.pass} fail=${entry.fail} skip=${entry.skip} exit=${entry.exitCode}`;
+    }
+    if (entry.type === "ERROR") {
         return entry.message;
     }
     return null;
@@ -565,15 +521,20 @@ export class MultiLayerLogger implements IAuditLogger {
 // Returns the layer display path that owns `entry`, or null when the entry is global (no layer scope).
 // Used by `MultiLayerLogger.log` to decide whether to fan out or route to a single logger.
 export function layerKeyForEntry(entry: IAuditLogEntry): string | null {
-    if (entry.type === "config_load") {
+    if (entry.type === "CONFIG") {
         return entry.filePath;
     }
-    if (entry.type === "trigger_match"
-        || entry.type === "gate_decision"
-        || entry.type === "command_about_to_run"
-        || entry.type === "command_started"
-        || entry.type === "command_result"
-        || entry.type === "state_saved") {
+    if (entry.type === "MATCH"
+        || entry.type === "GATE_RUN"
+        || entry.type === "COOLDOWN"
+        || entry.type === "UNCHANGED"
+        || entry.type === "SKIP"
+        || entry.type === "LAUNCHING"
+        || entry.type === "STARTED"
+        || entry.type === "PASS"
+        || entry.type === "FAIL"
+        || entry.type === "TIMEOUT"
+        || entry.type === "STATE_SAVED") {
         return entry.sourceFile;
     }
     return null;

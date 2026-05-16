@@ -2,7 +2,7 @@ import * as childProcess from "node:child_process";
 import * as nodeFs from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { AuditCommandOutcome, IAuditLogger, NullAuditLogger, toLocalISOString as toAuditLocalISOString } from "./audit-log";
+import { IAuditLogger, NullAuditLogger, toLocalISOString as toAuditLocalISOString } from "./audit-log";
 import { GateDecision, decideGate } from "./gate";
 import { findCommandRun, upsertCommandRun } from "./state";
 import { CompiledCommand, State } from "./types";
@@ -232,7 +232,7 @@ export async function runOneCommand(prepared: CompiledCommand, state: State, now
         }
     }
     await logger.log({
-        type: "gate_decision",
+        type: gate.type,
         timestamp: toAuditLocalISOString(nowFactory()),
         sourceFile: prepared.sourceFile,
         sourceLine: prepared.commandSourceLine,
@@ -244,10 +244,8 @@ export async function runOneCommand(prepared: CompiledCommand, state: State, now
         lastFilesHash,
         cooldownSeconds,
         elapsedSeconds,
-        decision: gate.run ? "run" : "skip",
-        reason: gate.reason,
     });
-    if (!gate.run) {
+    if (gate.type !== "GATE_RUN") {
         // Skip narration is recorded in the audit log via the `gate_decision` entry above; stdout
         // stays silent because Claude Code parses Stop-hook stdout as JSON on exit 0.
         return {
@@ -277,7 +275,7 @@ export async function runOneCommand(prepared: CompiledCommand, state: State, now
     // to run. Awaiting `logger.log` is what guarantees durability: `FileAuditLogger.log` uses
     // `fs.appendFile`, which opens, writes, and closes the file before resolving.
     await logger.log({
-        type: "command_about_to_run",
+        type: "LAUNCHING",
         timestamp: toAuditLocalISOString(startedAt),
         sourceFile: prepared.sourceFile,
         sourceLine: prepared.commandSourceLine,
@@ -294,7 +292,7 @@ export async function runOneCommand(prepared: CompiledCommand, state: State, now
     const flushStderr = pipeStreamWithTag(proc.stderr, writeStream, "[ERR] ");
 
     await logger.log({
-        type: "command_started",
+        type: "STARTED",
         timestamp: toAuditLocalISOString(nowFactory()),
         sourceFile: prepared.sourceFile,
         sourceLine: prepared.commandSourceLine,
@@ -365,19 +363,19 @@ export async function runOneCommand(prepared: CompiledCommand, state: State, now
 
     await endWriteStream(writeStream);
 
-    let outcome: AuditCommandOutcome;
+    let resultType: "PASS" | "FAIL" | "TIMEOUT";
     if (timedOut) {
-        outcome = "timeout";
+        resultType = "TIMEOUT";
     }
     else if (exitCode === 0 && error === undefined) {
-        outcome = "pass";
+        resultType = "PASS";
     }
     else {
-        outcome = "fail";
+        resultType = "FAIL";
     }
 
     await logger.log({
-        type: "command_result",
+        type: resultType,
         timestamp: toAuditLocalISOString(finishedAt),
         sourceFile: prepared.sourceFile,
         sourceLine: prepared.commandSourceLine,
@@ -385,13 +383,14 @@ export async function runOneCommand(prepared: CompiledCommand, state: State, now
         commandIndex: prepared.commandIndex,
         expandedRun: prepared.expandedRun,
         expandedCwd: prepared.expandedCwd,
+        pid: proc.pid ?? null,
         exitCode,
         durationMs,
-        outcome,
+        error,
         logFile: auditLogFile,
     });
 
-    if (outcome === "pass") {
+    if (resultType === "PASS") {
         upsertCommandRun(state, {
             commandKey: prepared.commandKey,
             expandedRun: prepared.expandedRun,

@@ -455,7 +455,7 @@ describe("runStopHook", () => {
         expect(installedIO.captured.exitCode).toBe(null);
         expect(joinedStdout(installedIO.captured)).toBe("");
         const entries = await readAuditEntries(projectDir, new Date());
-        const completedEntry = entries.find(entry => entry.type === "hook_completed")!;
+        const completedEntry = entries.find(entry => entry.type === "EXIT")!;
         expect(completedEntry.skipReason).toBe("no_changed_files");
         expect(completedEntry.exitCode).toBe(0);
     });
@@ -512,7 +512,7 @@ describe("runStopHook", () => {
         // Stop-hook stdout is reserved for JSON; pass/fail counts live in `hook_completed` instead.
         expect(joinedStdout(installedIO.captured)).toBe("");
         const entries = await readAuditEntries(subDir, new Date());
-        const completedEntry = entries.find(entry => entry.type === "hook_completed")!;
+        const completedEntry = entries.find(entry => entry.type === "EXIT")!;
         expect(completedEntry.pass).toBe(1);
         expect(completedEntry.fail).toBe(0);
         const markerText = await fs.readFile(expectedProjectFile, "utf8");
@@ -575,7 +575,7 @@ describe("runStopHook", () => {
         // for asserting the global pass total.
         expect(joinedStdout(installedIO.captured)).toBe("");
         const entries = await readAuditEntries(projectDir, new Date());
-        const completedEntry = entries.find(entry => entry.type === "hook_completed")!;
+        const completedEntry = entries.find(entry => entry.type === "EXIT")!;
         expect(completedEntry.pass).toBe(2);
         const homeFiredExists = await fileExists(path.join(projectDir, "home-fired.txt"));
         const projectFiredExists = await fileExists(path.join(projectDir, "project-fired.txt"));
@@ -649,11 +649,11 @@ describe("runStopHook", () => {
 
         const entries = await readAuditEntries(projectDir, new Date());
         const types = entries.map(entry => entry.type);
-        expect(types).toContain("hook_started");
-        expect(types).toContain("hook_completed");
-        const startedEntry = entries.find(entry => entry.type === "hook_started")!;
+        expect(types).toContain("ENTRY");
+        expect(types).toContain("EXIT");
+        const startedEntry = entries.find(entry => entry.type === "ENTRY")!;
         expect(startedEntry.stopHookActive).toBe(true);
-        const completedEntry = entries.find(entry => entry.type === "hook_completed")!;
+        const completedEntry = entries.find(entry => entry.type === "EXIT")!;
         expect(completedEntry.skipReason).toBe("stop_hook_active");
         expect(completedEntry.exitCode).toBe(0);
     });
@@ -688,35 +688,32 @@ describe("runStopHook", () => {
         expect(installedIO.captured.exitCode).toBe(null);
         const entries = await readAuditEntries(projectDir, new Date());
         const types = entries.map(entry => entry.type);
-        expect(types).toContain("hook_started");
-        expect(types).toContain("config_load");
-        expect(types).toContain("changed_files");
-        expect(types).toContain("trigger_match");
-        expect(types).toContain("gate_decision");
-        expect(types).toContain("command_started");
-        expect(types).toContain("command_result");
-        expect(types).toContain("state_saved");
-        expect(types).toContain("hook_completed");
+        expect(types).toContain("ENTRY");
+        expect(types).toContain("CONFIG");
+        expect(types).toContain("CHANGE");
+        expect(types).toContain("MATCH");
+        expect(types).toContain("GATE_RUN");
+        expect(types).toContain("STARTED");
+        expect(types).toContain("PASS");
+        expect(types).toContain("STATE_SAVED");
+        expect(types).toContain("EXIT");
 
-        const projectMatchEntries = entries.filter(entry => entry.type === "trigger_match" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
+        const projectMatchEntries = entries.filter(entry => entry.type === "MATCH" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
         expect(projectMatchEntries).toHaveLength(1);
         const matchEntry = projectMatchEntries[0];
         expect(matchEntry.sourceLine).toBe(2);
         expect(matchEntry.matchedFiles).toEqual(["x.ts"]);
 
-        const projectGateEntries = entries.filter(entry => entry.type === "gate_decision" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
+        const projectGateEntries = entries.filter(entry => entry.type === "GATE_RUN" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
         expect(projectGateEntries).toHaveLength(1);
         expect(projectGateEntries[0].sourceLine).toBe(5);
-        expect(projectGateEntries[0].decision).toBe("run");
-
-        const projectStartEntries = entries.filter(entry => entry.type === "command_started" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
+        const projectStartEntries = entries.filter(entry => entry.type === "STARTED" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
         expect(projectStartEntries).toHaveLength(1);
         expect(projectStartEntries[0].sourceLine).toBe(5);
 
-        const projectResultEntries = entries.filter(entry => entry.type === "command_result" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
+        const projectResultEntries = entries.filter(entry => entry.type === "PASS" && entry.sourceFile === ".claude/claude-tools-runner.yaml");
         expect(projectResultEntries).toHaveLength(1);
         expect(projectResultEntries[0].sourceLine).toBe(5);
-        expect(projectResultEntries[0].outcome).toBe("pass");
     });
 
     test("YAML parse error writes a hook_error audit-log entry, the canonical stderr line, and exits 2", async () => {
@@ -734,13 +731,13 @@ describe("runStopHook", () => {
         expect(joinedStderr(installedIO.captured)).toContain("failed to load .claude/claude-tools-runner.yaml");
         const entries = await readAuditEntries(projectDir, new Date());
         const types = entries.map(entry => entry.type);
-        expect(types).toContain("hook_started");
-        expect(types).toContain("hook_error");
-        const errorEntry = entries.find(entry => entry.type === "hook_error")!;
+        expect(types).toContain("ENTRY");
+        expect(types).toContain("ERROR");
+        const errorEntry = entries.find(entry => entry.type === "ERROR")!;
         expect(typeof errorEntry.message).toBe("string");
         expect((errorEntry.message as string)).toContain("failed to load .claude/claude-tools-runner.yaml");
         // The failing layer must NOT have a config_load entry; only the home layer (which loaded fine) gets one.
-        const projectConfigLoadEntries = entries.filter(entry => entry.type === "config_load" && entry.filePath === ".claude/claude-tools-runner.yaml");
+        const projectConfigLoadEntries = entries.filter(entry => entry.type === "CONFIG" && entry.filePath === ".claude/claude-tools-runner.yaml");
         expect(projectConfigLoadEntries).toHaveLength(0);
     });
 });

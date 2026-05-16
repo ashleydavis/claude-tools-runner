@@ -702,9 +702,9 @@ describe("runCommands audit-log emissions", () => {
         stubTwo.finishWithCode(0);
         await resultsPromise;
 
-        const gateEntries = auditLogger.entries.filter(entry => entry.type === "gate_decision");
-        const startEntries = auditLogger.entries.filter(entry => entry.type === "command_started");
-        const resultEntries = auditLogger.entries.filter(entry => entry.type === "command_result");
+        const gateEntries = auditLogger.entries.filter(entry => entry.type === "GATE_RUN");
+        const startEntries = auditLogger.entries.filter(entry => entry.type === "STARTED");
+        const resultEntries = auditLogger.entries.filter(entry => entry.type === "PASS");
         expect(gateEntries).toHaveLength(2);
         expect(startEntries).toHaveLength(2);
         expect(resultEntries).toHaveLength(2);
@@ -716,11 +716,10 @@ describe("runCommands audit-log emissions", () => {
         }
         for (const entry of resultEntries) {
             expect((entry as { sourceLine: number }).sourceLine).toBe(8);
-            expect((entry as { outcome: string }).outcome).toBe("pass");
         }
     });
 
-    test("a timed-out command emits command_result with outcome 'timeout' and exitCode -1", async () => {
+    test("a timed-out command emits TIMEOUT with exitCode -1", async () => {
         const fileOne = await writeChangedFile(auditTempDir, "src/a.ts", "alpha");
         const compiled = makeCompiled([fileOne], "sleep forever", path.join(auditTempDir, "work"), 0, 0.05);
         const recorder = makeRecordingSpawner();
@@ -740,10 +739,9 @@ describe("runCommands audit-log emissions", () => {
         stub.pushStderr(null);
         await resultsPromise;
 
-        const resultEntries = auditLogger.entries.filter(entry => entry.type === "command_result");
+        const resultEntries = auditLogger.entries.filter(entry => entry.type === "TIMEOUT");
         expect(resultEntries).toHaveLength(1);
-        const resultEntry = resultEntries[0] as { outcome: string; exitCode: number };
-        expect(resultEntry.outcome).toBe("timeout");
+        const resultEntry = resultEntries[0] as { exitCode: number };
         expect(resultEntry.exitCode).toBe(-1);
     });
 
@@ -775,7 +773,7 @@ describe("NullAuditLogger", () => {
     test("log resolves to undefined and does not throw", async () => {
         const logger: IAuditLogger = new NullAuditLogger();
         const result = await logger.log({
-            type: "hook_started",
+            type: "ENTRY",
             timestamp: "2026-05-09T14:30:15.123+10:00",
             cwd: "/tmp",
             projectDir: "/tmp",

@@ -2,17 +2,17 @@ import { aggregateHash } from "./hash";
 import { findCommandRun } from "./state";
 import { CommandRunEntry, CompiledCommand, State } from "./types";
 
-// Decision returned by `decideGate` for one prepared command. Carries both the boolean run/skip decision
-// and the diagnostic `reason` string that the runner prints in PASS/FAIL/SKIP log lines, plus the freshly
-// computed `filesHash` so the runner can persist it on success without recomputing.
+// Decision returned by `decideGate` for one prepared command. The `type` discriminator IS the user-facing
+// audit-log label: `GATE_RUN` means the command should be executed (JSON-only entry, no text-log line);
+// `COOLDOWN`, `UNCHANGED`, and `SKIP` are the three skip variants branched by cause so each cause is
+// greppable in the text log. `filesHash` is the freshly computed aggregate hash; it is returned even on
+// the skip paths so the runner can persist it on success without recomputing.
 export interface GateDecision {
-    // Whether the command should be executed on this Stop event.
-    run: boolean;
-    // Human-readable rationale for the decision. One of: "first run", "in cooldown",
-    // "no file changes since last successful run", or "files changed since last run".
-    reason: string;
-    // SHA-256 hex digest of `prepared.matchedFiles` content, computed via `aggregateHash`. Returned even when
-    // `run` is false so callers can compare against the stored `lastFilesHash` without recomputing.
+    // User-facing audit-log type. Doubles as both the "should we run?" predicate (only `GATE_RUN` runs)
+    // and the text-log label for skip variants.
+    type: "GATE_RUN" | "COOLDOWN" | "UNCHANGED" | "SKIP";
+    // SHA-256 hex digest of `prepared.matchedFiles` content, computed via `aggregateHash`. Returned even
+    // on the skip paths so callers can compare against the stored `lastFilesHash` without recomputing.
     filesHash: string;
 }
 
@@ -29,13 +29,13 @@ export async function decideGate(prepared: CompiledCommand, state: State, now: D
     const filesHash: string = await aggregateHash(prepared.matchedFiles, state.fileHashes);
     const entry: CommandRunEntry | undefined = findCommandRun(state, prepared.commandKey);
     if (entry === undefined) {
-        return { run: true, reason: "first run", filesHash };
+        return { type: "GATE_RUN", filesHash };
     }
 
     const lastRunAtMs: number = Date.parse(entry.lastRunAt);
     if (Number.isNaN(lastRunAtMs)) {
         process.stderr.write(`[tools-runner] ${prepared.sourceFile} cmd ${prepared.commandIndex}: invalid lastRunAt "${entry.lastRunAt}", treating as first run\n`);
-        return { run: true, reason: "first run", filesHash };
+        return { type: "GATE_RUN", filesHash };
     }
 
     const elapsedMs: number = now.getTime() - lastRunAtMs;
@@ -43,12 +43,12 @@ export async function decideGate(prepared: CompiledCommand, state: State, now: D
     const cooldownMs: number = cooldownSeconds * 1000;
     const inCooldown: boolean = elapsedMs < cooldownMs;
     if (inCooldown) {
-        return { run: false, reason: "in cooldown", filesHash };
+        return { type: "COOLDOWN", filesHash };
     }
 
     if (filesHash === entry.lastFilesHash) {
-        return { run: false, reason: "no file changes since last successful run", filesHash };
+        return { type: "UNCHANGED", filesHash };
     }
 
-    return { run: true, reason: "files changed since last run", filesHash };
+    return { type: "GATE_RUN", filesHash };
 }

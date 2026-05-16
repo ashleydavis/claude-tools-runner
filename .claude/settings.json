@@ -1,5 +1,5 @@
 {
-    "hooks": {
+    "_disabled_hooks_global_already_registered": {
         "Stop": [
             {
                 "matcher": "",
