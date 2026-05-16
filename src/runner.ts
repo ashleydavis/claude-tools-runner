@@ -270,14 +270,32 @@ export async function runOneCommand(prepared: CompiledCommand, state: State, now
     writeStream.write(`> started: ${toLocalISOString(startedAt)}\n`);
     writeStream.write(`---\n`);
 
+    const timeoutSeconds = prepared.command.timeout ?? DEFAULT_TIMEOUT_SECONDS;
+
+    // Emit and FLUSH the "about to run" entry to disk BEFORE forking the child. If the spawn (or the
+    // host itself) dies between this entry and `command_started`, the audit log still records the intent
+    // to run. Awaiting `logger.log` is what guarantees durability: `FileAuditLogger.log` uses
+    // `fs.appendFile`, which opens, writes, and closes the file before resolving.
+    await logger.log({
+        type: "command_about_to_run",
+        timestamp: toAuditLocalISOString(startedAt),
+        sourceFile: prepared.sourceFile,
+        sourceLine: prepared.commandSourceLine,
+        triggerIndex: prepared.triggerIndexInFile,
+        commandIndex: prepared.commandIndex,
+        expandedRun: prepared.expandedRun,
+        expandedCwd: prepared.expandedCwd,
+        timeoutSeconds,
+        logFile: auditLogFile,
+    });
+
     const proc = spawnFn(["sh", "-c", prepared.expandedRun], { cwd: prepared.expandedCwd });
     const flushStdout = pipeStreamWithTag(proc.stdout, writeStream, "[OUT] ");
     const flushStderr = pipeStreamWithTag(proc.stderr, writeStream, "[ERR] ");
 
-    const timeoutSeconds = prepared.command.timeout ?? DEFAULT_TIMEOUT_SECONDS;
     await logger.log({
         type: "command_started",
-        timestamp: toAuditLocalISOString(startedAt),
+        timestamp: toAuditLocalISOString(nowFactory()),
         sourceFile: prepared.sourceFile,
         sourceLine: prepared.commandSourceLine,
         triggerIndex: prepared.triggerIndexInFile,

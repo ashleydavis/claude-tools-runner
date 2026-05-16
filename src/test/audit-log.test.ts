@@ -125,7 +125,38 @@ describe("labelFor", () => {
             timeoutSeconds: 30,
             logFile: "/tmp/log.log",
         };
-        expect(labelFor(startEntry)).toBe("CMD");
+        expect(labelFor(startEntry)).toBe("STARTED");
+
+        const aboutEntry: IAuditLogEntry = {
+            type: "command_about_to_run",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            sourceFile: "a.yaml",
+            sourceLine: 5,
+            triggerIndex: 0,
+            commandIndex: 0,
+            expandedRun: "bun run test",
+            expandedCwd: "/tmp",
+            timeoutSeconds: 30,
+            logFile: "/tmp/log.log",
+        };
+        expect(labelFor(aboutEntry)).toBe("LAUNCHING");
+
+        const cooldownEntry: IAuditLogEntry = {
+            type: "gate_decision",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            sourceFile: "a.yaml",
+            sourceLine: 5,
+            triggerIndex: 0,
+            commandIndex: 0,
+            expandedRun: "bun run test",
+            expandedCwd: "/tmp",
+            filesHash: "abc",
+            cooldownSeconds: 60,
+            decision: "skip",
+            reason: "in cooldown",
+        };
+        expect(labelFor(cooldownEntry)).toBe("COOLDOWN");
+        expect(labelFor({ ...cooldownEntry, reason: "no file changes since last successful run" })).toBe("UNCHANGED");
 
         const passEntry: IAuditLogEntry = {
             type: "command_result",
@@ -155,7 +186,7 @@ describe("labelFor", () => {
 });
 
 describe("renderEntryBody", () => {
-    test("returns null for entries that are JSON-only (hook_started, gate_decision, state_saved, hook_completed)", () => {
+    test("returns null for entries that are JSON-only (hook_started, gate_decision with decision='run', state_saved, hook_completed)", () => {
         const variants: IAuditLogEntry[] = [
             {
                 type: "hook_started",
@@ -378,17 +409,17 @@ describe("formatTextEntry", () => {
             logFile: "/tmp/log.log",
         };
         const line = formatTextEntry(entry);
-        expect(line).toBe(`14:30:15  PASS    a.yaml:5 "bun run test" 1586ms`);
+        expect(line).toBe(`14:30:15  PASS       a.yaml:5 "bun run test" 1586ms`);
     });
 
-    test("aligns short labels into the same column as TIMEOUT (the longest label) so consecutive lines line up", () => {
+    test("aligns short labels into the same column as the longest label (UNCHANGED/LAUNCHING) so consecutive lines line up", () => {
         const fileEntry: IAuditLogEntry = {
             type: "changed_files",
             timestamp: "2026-05-09T14:30:15.123+10:00",
             count: 1,
             files: [{ path: "a.ts" }],
         };
-        expect(formatTextEntry(fileEntry)).toBe(`14:30:15  CHANGE  1 files: a.ts`);
+        expect(formatTextEntry(fileEntry)).toBe(`14:30:15  CHANGE     1 files: a.ts`);
 
         const timeoutEntry: IAuditLogEntry = {
             type: "command_result",
@@ -404,10 +435,10 @@ describe("formatTextEntry", () => {
             outcome: "timeout",
             logFile: "/tmp/log.log",
         };
-        expect(formatTextEntry(timeoutEntry)).toBe(`14:30:15  TIMEOUT a.yaml:5 "sleep 5" 1004ms`);
+        expect(formatTextEntry(timeoutEntry)).toBe(`14:30:15  TIMEOUT    a.yaml:5 "sleep 5" 1004ms`);
     });
 
-    test("CMD lines render with the short three-letter label", () => {
+    test("STARTED lines render after the child has been spawned", () => {
         const entry: IAuditLogEntry = {
             type: "command_started",
             timestamp: "2026-05-09T14:30:15.123+10:00",
@@ -421,7 +452,77 @@ describe("formatTextEntry", () => {
             timeoutSeconds: 30,
             logFile: "/tmp/log.log",
         };
-        expect(formatTextEntry(entry)).toBe(`14:30:15  CMD     a.yaml:5 "bun run test"`);
+        expect(formatTextEntry(entry)).toBe(`14:30:15  STARTED    a.yaml:5 "bun run test"`);
+    });
+
+    test("LAUNCHING lines render before the child has been spawned", () => {
+        const entry: IAuditLogEntry = {
+            type: "command_about_to_run",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            sourceFile: "a.yaml",
+            sourceLine: 5,
+            triggerIndex: 0,
+            commandIndex: 0,
+            expandedRun: "bun run test",
+            expandedCwd: "/tmp",
+            timeoutSeconds: 30,
+            logFile: "/tmp/log.log",
+        };
+        expect(formatTextEntry(entry)).toBe(`14:30:15  LAUNCHING  a.yaml:5 "bun run test"`);
+    });
+
+    test("COOLDOWN lines render gate_decision skips caused by cooldown", () => {
+        const entry: IAuditLogEntry = {
+            type: "gate_decision",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            sourceFile: "a.yaml",
+            sourceLine: 5,
+            triggerIndex: 0,
+            commandIndex: 0,
+            expandedRun: "bun run test",
+            expandedCwd: "/tmp",
+            filesHash: "abc",
+            cooldownSeconds: 60,
+            decision: "skip",
+            reason: "in cooldown",
+        };
+        expect(formatTextEntry(entry)).toBe(`14:30:15  COOLDOWN   a.yaml:5 "bun run test" in cooldown`);
+    });
+
+    test("UNCHANGED lines render gate_decision skips caused by unchanged files", () => {
+        const entry: IAuditLogEntry = {
+            type: "gate_decision",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            sourceFile: "a.yaml",
+            sourceLine: 5,
+            triggerIndex: 0,
+            commandIndex: 0,
+            expandedRun: "bun run test",
+            expandedCwd: "/tmp",
+            filesHash: "abc",
+            cooldownSeconds: 60,
+            decision: "skip",
+            reason: "no file changes since last successful run",
+        };
+        expect(formatTextEntry(entry)).toBe(`14:30:15  UNCHANGED  a.yaml:5 "bun run test" no file changes since last successful run`);
+    });
+
+    test("gate_decision with decision='run' stays out of the text log", () => {
+        const entry: IAuditLogEntry = {
+            type: "gate_decision",
+            timestamp: "2026-05-09T14:30:15.123+10:00",
+            sourceFile: "a.yaml",
+            sourceLine: 5,
+            triggerIndex: 0,
+            commandIndex: 0,
+            expandedRun: "bun run test",
+            expandedCwd: "/tmp",
+            filesHash: "abc",
+            cooldownSeconds: 60,
+            decision: "run",
+            reason: "first run",
+        };
+        expect(formatTextEntry(entry)).toBeNull();
     });
 
     test("returns null for entries that exist only in the JSON log", () => {
@@ -502,7 +603,7 @@ describe("FileAuditLogger.log", () => {
         expect(jsonLines).toHaveLength(2);
         expect(JSON.parse(jsonLines[0]).type).toBe("hook_started");
         expect(JSON.parse(jsonLines[1]).type).toBe("command_result");
-        expect(textBody).toBe(`14:30:16  PASS    a.yaml:5 "bun run test" 1586ms\n`);
+        expect(textBody).toBe(`14:30:16  PASS       a.yaml:5 "bun run test" 1586ms\n`);
     });
 
     test("two sequential command_result calls produce two lines in each file", async () => {
@@ -567,7 +668,7 @@ describe("FileAuditLogger.log", () => {
         const jsonText = await fs.readFile(resolveJsonLogPath(tempDir, fixedNow), "utf8");
         const textBody = await fs.readFile(resolveTextLogPath(tempDir, fixedNow), "utf8");
         expect(JSON.parse(jsonText.trim()).type).toBe("config_load");
-        expect(textBody).toBe("14:30:15  CONFIG  a.yaml\n");
+        expect(textBody).toBe("14:30:15  CONFIG     a.yaml\n");
     });
 
     test("five concurrent calls produce five lines without partial-line interleaving in either file", async () => {

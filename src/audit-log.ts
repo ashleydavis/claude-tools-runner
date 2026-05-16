@@ -140,6 +140,31 @@ export interface IAuditGateDecisionEntry extends IAuditEntryBase {
     reason: string;
 }
 
+// Emitted (and flushed to disk) immediately before the child process is spawned. Pairs with a later
+// `command_started` entry once the spawn returns with a pid, and a `command_result` entry on exit. Exists
+// so that the audit log records the intent to run before the process is forked: if the spawn or the host
+// itself dies between this entry and `command_started`, the log still shows that the command was about to
+// run. Carries no pid (the child has not been forked yet).
+export interface IAuditCommandAboutToRunEntry extends IAuditEntryBase {
+    type: "command_about_to_run";
+    // Display path of the YAML layer that produced this command.
+    sourceFile: string;
+    // 1-based line of the source trigger.
+    sourceLine: number;
+    // 0-based trigger index within `sourceFile`.
+    triggerIndex: number;
+    // 0-based command index within the trigger.
+    commandIndex: number;
+    // Fully template-expanded shell command line.
+    expandedRun: string;
+    // Fully template-expanded working directory.
+    expandedCwd: string;
+    // Effective per-command timeout in seconds.
+    timeoutSeconds: number;
+    // Absolute path of the per-command log file capturing the child's stdout and stderr.
+    logFile: string;
+}
+
 // Emitted once per command actually spawned (gate decided `run`). Pairs with a `command_result` entry
 // carrying the same `sourceFile`/`sourceLine`/`commandIndex` triple.
 export interface IAuditCommandStartedEntry extends IAuditEntryBase {
@@ -251,6 +276,7 @@ export type IAuditLogEntry =
     | IAuditChangedFilesEntry
     | IAuditTriggerMatchEntry
     | IAuditGateDecisionEntry
+    | IAuditCommandAboutToRunEntry
     | IAuditCommandStartedEntry
     | IAuditCommandResultEntry
     | IAuditStateSavedEntry
@@ -312,27 +338,31 @@ export function resolveCommandLogDir(baseDir: string, now: Date): string {
 }
 
 // Renders `entry` as a single human-readable line for the `.log` companion of the JSON audit log. Returns
-// `null` for entry variants that exist only in the JSON log (`hook_started`, `gate_decision`, `state_saved`,
-// `hook_completed`); callers must skip the text append in that case. The format is
-// `HH:MM:SS  LABEL  <details>`; the surfaced labels match the user-facing audit-log spec
-// (CONFIG, CHANGE, MATCH, CMD, PASS, FAIL, TIMEOUT, ERROR). `<sourceFile>:<sourceLine>` prefixes are
-// formatted like editor-jump locations and point at the command's `run:` line for command-level entries.
+// `null` for entry variants that exist only in the JSON log (`hook_started`, `state_saved`,
+// `hook_completed`, and the `decision: "run"` case of `gate_decision`); callers must skip the text append
+// in that case. The format is `HH:MM:SS  LABEL      <details>` (label column padded to 11). The surfaced
+// labels match the user-facing audit-log spec (CONFIG, CHANGE, MATCH, COOLDOWN, UNCHANGED, LAUNCHING,
+// STARTED, PASS, FAIL, TIMEOUT, ERROR). `<sourceFile>:<sourceLine>` prefixes are formatted like
+// editor-jump locations and point at the command's `run:` line for command-level entries.
 export function formatTextEntry(entry: IAuditLogEntry): string | null {
     const body = renderEntryBody(entry);
     if (body === null) {
         return null;
     }
     const timeOnly = entry.timestamp.length >= 19 ? entry.timestamp.slice(11, 19) : entry.timestamp;
-    const label = labelFor(entry).padEnd(8);
+    const label = labelFor(entry).padEnd(11);
     return `${timeOnly}  ${label}${body}`;
 }
 
 // Returns the column label for `entry`. The labels are the user-facing audit-log spec:
 // CONFIG (a config file was loaded), CHANGE (the changed-file scan), MATCH (per-trigger match results),
-// CMD (a command was spawned), PASS / FAIL / TIMEOUT (a command exited or timed out, branched by outcome
-// so the end-of-command line is greppable), ERROR (a fatal hook error). `gate_decision`, `hook_started`,
-// `state_saved`, and `hook_completed` exist in the JSON log only and `formatTextEntry` short-circuits on
-// them, so callers should not see this function asked to label them.
+// COOLDOWN / UNCHANGED (a command was gate-skipped, branched by reason so each skip cause is greppable),
+// LAUNCHING (a command is about to be spawned; emitted and flushed before the fork), STARTED (a command
+// has been spawned and is now running, carrying the child pid), PASS / FAIL / TIMEOUT (a command exited
+// or timed out, branched by outcome so the end-of-command line is greppable), ERROR (a fatal hook error).
+// `hook_started`, `state_saved`, `hook_completed`, and the `decision: "run"` case of `gate_decision`
+// exist in the JSON log only and `formatTextEntry` short-circuits on them, so callers should not see
+// this function asked to label them.
 export function labelFor(entry: IAuditLogEntry): string {
     if (entry.type === "config_load") {
         return "CONFIG";
@@ -343,8 +373,20 @@ export function labelFor(entry: IAuditLogEntry): string {
     if (entry.type === "trigger_match") {
         return "MATCH";
     }
+    if (entry.type === "gate_decision") {
+        if (entry.reason === "in cooldown") {
+            return "COOLDOWN";
+        }
+        if (entry.reason === "no file changes since last successful run") {
+            return "UNCHANGED";
+        }
+        return "SKIP";
+    }
+    if (entry.type === "command_about_to_run") {
+        return "LAUNCHING";
+    }
     if (entry.type === "command_started") {
-        return "CMD";
+        return "STARTED";
     }
     if (entry.type === "command_result") {
         if (entry.outcome === "pass") {
@@ -378,10 +420,12 @@ function truncateFileList(fullList: string): string {
 
 // Routes `entry` to its variant-specific text renderer. Returns `null` for entries that exist only in the
 // JSON log; the text log carries the user-facing chain (`config_load` -> `changed_files` -> `trigger_match`
-// -> `command_started` -> `command_result`) plus `hook_error`. `hook_started`, `gate_decision`,
-// `state_saved`, and `hook_completed` are JSON-only because the surfaced lines already convey what the
-// user needs (which configs loaded, which files changed, which triggers matched and on what patterns,
-// what command started, and how it finished including exit code or timeout and duration).
+// -> `gate_decision` (skip only) | (`command_about_to_run` -> `command_started` -> `command_result`)) plus
+// `hook_error`. `hook_started`, `state_saved`, `hook_completed`, and the `decision: "run"` case of
+// `gate_decision` are JSON-only because the surfaced lines already convey what the user needs (which
+// configs loaded, which files changed, which triggers matched and on what patterns, why a command was
+// skipped, when a command was about to run, when it actually started, and how it finished including
+// exit code or timeout and duration).
 export function renderEntryBody(entry: IAuditLogEntry): string | null {
     if (entry.type === "config_load") {
         return entry.filePath;
@@ -401,6 +445,15 @@ export function renderEntryBody(entry: IAuditLogEntry): string | null {
         }
         const matchedList = entry.matchedFiles.join(", ");
         return `${entry.sourceFile}:${entry.sourceLine} patterns=${patternList} matched ${entry.matchedFiles.length}/${totalConsidered}: ${truncateFileList(matchedList)}`;
+    }
+    if (entry.type === "gate_decision") {
+        if (entry.decision === "run") {
+            return null;
+        }
+        return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}" ${entry.reason}`;
+    }
+    if (entry.type === "command_about_to_run") {
+        return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}"`;
     }
     if (entry.type === "command_started") {
         return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}"`;
@@ -517,6 +570,7 @@ export function layerKeyForEntry(entry: IAuditLogEntry): string | null {
     }
     if (entry.type === "trigger_match"
         || entry.type === "gate_decision"
+        || entry.type === "command_about_to_run"
         || entry.type === "command_started"
         || entry.type === "command_result"
         || entry.type === "state_saved") {
