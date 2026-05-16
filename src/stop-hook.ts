@@ -2,7 +2,7 @@ import * as path from "node:path";
 import { FileAuditLogger, HookSkipReason, IAuditLogger, MultiLayerLogger, NullAuditLogger, createLogger, resolveLogBaseDir, toLocalISOString } from "./audit-log";
 import { HOME_DISPLAY_PATH, homeConfigPath, loadProjectRootIgnorePatterns, scanConfigFiles } from "./config";
 import { collectChangedFiles } from "./git";
-import { hashesPath, loadState, runsDir, SaveStateResult, saveState } from "./state";
+import { clearLayerState, hashesPath, loadState, runsDir, SaveStateResult, saveState } from "./state";
 import { runCommands, RunResult } from "./runner";
 import { FileLayer } from "./trigger-registry";
 import { ChangedFile, CompiledCommand, State, StopHookInput } from "./types";
@@ -329,6 +329,31 @@ export async function runStopHook(): Promise<void> {
             count: sortedChanged.length,
             files: sortedChanged.map(file => ({ path: file.path })),
         });
+
+        // Clear stale per-command run files for any layer whose scope shows zero changed files. A clean
+        // working tree means the runner cannot still be holding state about uncommitted broken-file content,
+        // so any persisted `lastFilesHash` is by definition out of date. Done before the early-exit below
+        // so the cleanup fires even on a fully idle Stop event. Failures here propagate to the outer
+        // try/catch and are surfaced as `hook_error` plus the canonical stderr line.
+        for (const slot of layers) {
+            if (!slot.hasFileBackedState) {
+                continue;
+            }
+            const layerChanged = perLayerChanged.get(slot.displayPath);
+            if (layerChanged === undefined || layerChanged.length > 0) {
+                continue;
+            }
+            const clearedCount = await clearLayerState(slot.scopeDir);
+            if (clearedCount > 0) {
+                await logger.log({
+                    type: "CLEARED",
+                    timestamp: toLocalISOString(new Date()),
+                    sourceFile: slot.displayPath,
+                    runsDir: runsDir(slot.scopeDir),
+                    clearedCount,
+                });
+            }
+        }
 
         if (totalChanged === 0) {
             // Recorded in the audit log via the `no_changed_files` skip reason; stdout stays silent.

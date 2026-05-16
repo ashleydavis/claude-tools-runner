@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as YAML from "yaml";
 import {
+    clearLayerState,
     commandKeyFor,
     commandRunPath,
     emptyState,
@@ -507,6 +508,52 @@ describe("saveState", () => {
         expect(loaded.fileHashes["/tmp/myrepo/a.ts"]).toEqual({ mtimeMs: 100, size: 10, hash: "aa" });
         expect(loaded.commandRuns.length).toBe(1);
         expect(loaded.commandRuns[0].commandKey).toBe("k1");
+    });
+});
+
+describe("clearLayerState", () => {
+    let tempArea: TempArea;
+
+    beforeEach(async () => {
+        tempArea = await makeTempArea();
+    });
+
+    afterEach(async () => {
+        await cleanupTempArea(tempArea);
+    });
+
+    test("returns 0 when neither runs nor hashes exist", async () => {
+        const result = await clearLayerState(tempArea.rootDir);
+        expect(result).toBe(0);
+    });
+
+    test("returns 0 when the runs directory exists but is empty", async () => {
+        await fs.mkdir(runsDir(tempArea.rootDir), { recursive: true });
+        const result = await clearLayerState(tempArea.rootDir);
+        expect(result).toBe(0);
+    });
+
+    test("removes the runs directory and the hashes file, returning the run-file count", async () => {
+        const firstEntry = makeCommandRunEntry({ commandKey: "k1" });
+        const secondEntry = makeCommandRunEntry({ commandKey: "k2" });
+        await writeFileEnsuringDirs(commandRunPath(tempArea.rootDir, "k1"), makeRunFileYaml(firstEntry));
+        await writeFileEnsuringDirs(commandRunPath(tempArea.rootDir, "k2"), makeRunFileYaml(secondEntry));
+        await writeFileEnsuringDirs(hashesPath(tempArea.rootDir), makeHashesFileYaml({ "/tmp/a.ts": { mtimeMs: 100, size: 10, hash: "aa" } }));
+
+        const result = await clearLayerState(tempArea.rootDir);
+
+        expect(result).toBe(2);
+        await expect(fs.stat(runsDir(tempArea.rootDir))).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(fs.stat(hashesPath(tempArea.rootDir))).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    test("removes the hashes file even when no run files exist", async () => {
+        await writeFileEnsuringDirs(hashesPath(tempArea.rootDir), makeHashesFileYaml({ "/tmp/a.ts": { mtimeMs: 100, size: 10, hash: "aa" } }));
+
+        const result = await clearLayerState(tempArea.rootDir);
+
+        expect(result).toBe(0);
+        await expect(fs.stat(hashesPath(tempArea.rootDir))).rejects.toMatchObject({ code: "ENOENT" });
     });
 });
 

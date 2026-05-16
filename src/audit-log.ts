@@ -238,6 +238,21 @@ export interface IAuditStateSavedEntry extends IAuditEntryBase {
     prunedFileHashes: number;
 }
 
+// Emitted once per layer whose scope shows zero changed files in `git status`. Records the number of
+// per-command run files that were removed from `<scopeDir>/.claude/claude-tools-runner/runs/` because a
+// clean working tree means every stored `lastFilesHash` is now stale by definition. The per-layer
+// `hashes.yaml` cache is removed alongside (its rows describe pre-reset content until the next access
+// re-stats each file). Absent (rather than `clearedCount: 0`) when nothing needed to be removed.
+export interface IAuditRunsClearedEntry extends IAuditEntryBase {
+    type: "CLEARED";
+    // Display path of the YAML layer whose state was cleared.
+    sourceFile: string;
+    // Absolute path of the per-layer runs directory that was removed.
+    runsDir: string;
+    // Number of per-command run files removed. Always at least 1 (the entry is suppressed otherwise).
+    clearedCount: number;
+}
+
 // Emitted once at the end of each invocation (paired with `hook_started`). When the hook aborts via
 // `hook_error` followed by `process.exit(1)` the completed entry may not get written; that absence is itself
 // a useful signal.
@@ -282,6 +297,7 @@ export type IAuditLogEntry =
     | IAuditCommandStartedEntry
     | IAuditCommandResultEntry
     | IAuditStateSavedEntry
+    | IAuditRunsClearedEntry
     | IAuditHookCompletedEntry
     | IAuditHookErrorEntry;
 
@@ -418,6 +434,9 @@ export function renderEntryBody(entry: IAuditLogEntry): string | null {
         const errorPart = entry.error !== undefined ? ` error="${entry.error}"` : "";
         return `${entry.sourceFile}:${entry.sourceLine} "${entry.expandedRun}"${pidPart} exit=${entry.exitCode} ${entry.durationMs}ms${errorPart}`;
     }
+    if (entry.type === "CLEARED") {
+        return `${entry.sourceFile} cleared ${entry.clearedCount} stale run${entry.clearedCount === 1 ? "" : "s"} (no git changes in scope)`;
+    }
     if (entry.type === "EXIT") {
         return `${entry.durationMs}ms pass=${entry.pass} fail=${entry.fail} skip=${entry.skip} exit=${entry.exitCode}`;
     }
@@ -535,7 +554,8 @@ export function layerKeyForEntry(entry: IAuditLogEntry): string | null {
         || entry.type === "PASS"
         || entry.type === "FAIL"
         || entry.type === "TIMEOUT"
-        || entry.type === "STATE_SAVED") {
+        || entry.type === "STATE_SAVED"
+        || entry.type === "CLEARED") {
         return entry.sourceFile;
     }
     return null;

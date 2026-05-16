@@ -437,6 +437,37 @@ describe("runStopHook", () => {
         expect(joinedStdout(installedIO.captured)).toBe("");
     });
 
+    test("clears stale per-command run files when git reports zero changed files in a scope", async () => {
+        process.env["CLAUDE_PROJECT_DIR"] = projectDir;
+        process.env["HOME"] = homeDir;
+        await initGitRepo(projectDir);
+        await fs.mkdir(path.join(projectDir, ".claude"), { recursive: true });
+        await fs.writeFile(path.join(projectDir, ".claude", "claude-tools-runner.yaml"), "triggers:\n  - paths:\n      - 'src/**/*.ts'\n    commands:\n      - run: 'true'\n");
+        await runGit(projectDir, ["add", "-A"]);
+        await runGit(projectDir, ["commit", "-q", "-m", "config"]);
+
+        // Seed a stale run file as if a previous Stop event had run `true` against a now-reverted edit.
+        const runsDirPath = path.join(projectDir, ".claude", "claude-tools-runner", "runs");
+        await fs.mkdir(runsDirPath, { recursive: true });
+        await fs.writeFile(path.join(runsDirPath, "stale.yaml"), "commandKey: stale\nexpandedRun: 'true'\nexpandedCwd: " + projectDir + "\nsourceFile: .claude/claude-tools-runner.yaml\nsourceLine: 1\nlastRunAt: '2026-05-09T00:00:00.000Z'\nlastFilesHash: deadbeef\nmatchedFiles: []\n");
+
+        restoreStdin();
+        restoreStdin = installStdin("{}");
+
+        await runHookAllowingExit();
+
+        expect(installedIO.captured.exitCode).toBe(null);
+        await expect(fs.stat(runsDirPath)).rejects.toMatchObject({ code: "ENOENT" });
+        const entries = await readAuditEntries(projectDir, new Date());
+        const clearedEntry = entries.find(entry => entry.type === "CLEARED");
+        expect(clearedEntry).toBeDefined();
+        expect(clearedEntry!.clearedCount).toBe(1);
+        expect(clearedEntry!.sourceFile).toBe(".claude/claude-tools-runner.yaml");
+        const completedEntry = entries.find(entry => entry.type === "EXIT")!;
+        expect(completedEntry.skipReason).toBe("no_changed_files");
+        expect(completedEntry.exitCode).toBe(0);
+    });
+
     test("triggers configured but no changed files exits 0 silently with skipReason no_changed_files", async () => {
         process.env["CLAUDE_PROJECT_DIR"] = projectDir;
         process.env["HOME"] = homeDir;

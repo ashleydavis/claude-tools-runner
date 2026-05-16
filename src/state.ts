@@ -239,6 +239,35 @@ export async function saveState(scopeDir: string, state: State, opts?: SaveState
     return { prunedCommandRuns, prunedFileHashes };
 }
 
+// Removes `runsDir(scopeDir)` (recursively) and `hashesPath(scopeDir)` from disk, returning the number of
+// files that were inside the runs directory. Called from the Stop hook when `git status` reports zero
+// changed files for a scope: a clean working tree means no run entry can still describe an uncommitted
+// state, so the stored `lastFilesHash` is stale by definition; the hash cache is also dropped because its
+// `{mtimeMs, size, hash}` rows describe pre-reset content until the next access re-stats each file (the
+// stale row would never be *returned* thanks to the mtime check in `hashFileWithCache`, but symmetry with
+// the runs cleanup keeps the on-disk state file honest). The readdir runs first so the audit entry can
+// record a count; the two `fs.rm` calls then take the whole tree and the cache file in one shot, both
+// with `force: true` so missing entries are tolerated. Next `saveState` recreates everything.
+export async function clearLayerState(scopeDir: string): Promise<number> {
+    const dir: string = runsDir(scopeDir);
+    let fileNames: string[];
+    try {
+        fileNames = await fs.readdir(dir);
+    }
+    catch (caughtErr) {
+        const errnoErr = caughtErr as NodeJS.ErrnoException;
+        if (errnoErr.code === "ENOENT") {
+            fileNames = [];
+        }
+        else {
+            throw caughtErr;
+        }
+    }
+    await fs.rm(dir, { recursive: true, force: true });
+    await fs.rm(hashesPath(scopeDir), { force: true });
+    return fileNames.length;
+}
+
 // Reads, parses, and validates the hash cache file at `filePath`. Returns an empty map on ENOENT (the file
 // has not been created yet) or when the file exists but is corrupt; the corrupt path also writes one
 // diagnostic line to stderr so `loadState` callers see why the cache was dropped. Other read errors
