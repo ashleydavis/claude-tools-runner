@@ -311,7 +311,7 @@ describe("runCommands", () => {
         expect(logText).toContain("---\n[OUT] abc\n---\n");
     });
 
-    test("on non-zero exit does not update lastFilesHash and the log footer records the exit code", async () => {
+    test("on non-zero exit records a CommandRunEntry so the unchanged-files gate suppresses re-running the same failure, and the log footer records the exit code", async () => {
         const fileOne = await writeChangedFile(tempDir, "src/a.ts", "alpha");
         const compiled = makeCompiled([fileOne], "exit 2", path.join(tempDir, "work"), 0, 30);
         const recorder = makeRecordingSpawner();
@@ -331,7 +331,13 @@ describe("runCommands", () => {
         const results = await resultsPromise;
 
         expect(results[0].exitCode).toBe(2);
-        expect(state.commandRuns).toHaveLength(0);
+        expect(state.commandRuns).toHaveLength(1);
+        const entry = state.commandRuns[0];
+        expect(entry.commandKey).toBe(compiled.commandKey);
+        expect(entry.lastRunAt).toBe(fixedNow.toISOString());
+        const expectedHash = await aggregateHash(compiled.matchedFiles, {});
+        expect(entry.lastFilesHash).toBe(expectedHash);
+        expect(entry.matchedFiles).toEqual([fileOne.absPath]);
         const logText = await fs.readFile(results[0].logFile, "utf8");
         expect(logText).toContain("> exit: 2\n");
     });
@@ -377,7 +383,7 @@ describe("runCommands", () => {
         expect(logRoot).toEqual([]);
     });
 
-    test("per-command timeout kills the process and records '> killed: timeout' in the log footer", async () => {
+    test("per-command timeout kills the process, records '> killed: timeout' in the log footer, and records a CommandRunEntry so the unchanged-files gate suppresses re-running the same timeout", async () => {
         const fileOne = await writeChangedFile(tempDir, "src/a.ts", "alpha");
         const compiled = makeCompiled([fileOne], "sleep forever", path.join(tempDir, "work"), 0, 0.05);
         const recorder = makeRecordingSpawner();
@@ -402,12 +408,14 @@ describe("runCommands", () => {
         expect(results[0].error).toBe("timeout");
         expect(results[0].exitCode).toBe(-1);
         expect(stub.killSpy).toHaveBeenCalledWith("SIGTERM");
-        expect(state.commandRuns).toHaveLength(0);
+        expect(state.commandRuns).toHaveLength(1);
+        expect(state.commandRuns[0].commandKey).toBe(compiled.commandKey);
+        expect(state.commandRuns[0].lastRunAt).toBe(fixedNow.toISOString());
         const logText = await fs.readFile(results[0].logFile, "utf8");
         expect(logText).toContain("> killed: timeout\n");
     });
 
-    test("ENOENT from spawn (rejected exited promise) surfaces error message and does not update state", async () => {
+    test("ENOENT from spawn (rejected exited promise) surfaces error message and records a CommandRunEntry", async () => {
         const fileOne = await writeChangedFile(tempDir, "src/a.ts", "alpha");
         const compiled = makeCompiled([fileOne], "missing-binary", path.join(tempDir, "work"), 0, 30);
         const recorder = makeRecordingSpawner();
@@ -429,7 +437,9 @@ describe("runCommands", () => {
 
         expect(results[0].exitCode).toBe(-1);
         expect(results[0].error).toBe("spawn sh ENOENT");
-        expect(state.commandRuns).toHaveLength(0);
+        expect(state.commandRuns).toHaveLength(1);
+        expect(state.commandRuns[0].commandKey).toBe(compiled.commandKey);
+        expect(state.commandRuns[0].lastRunAt).toBe(fixedNow.toISOString());
     });
 });
 

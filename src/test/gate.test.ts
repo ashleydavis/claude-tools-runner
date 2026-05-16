@@ -125,7 +125,7 @@ describe("decideGate", () => {
         expect(decision.type).toBe("COOLDOWN");
     });
 
-    test("returns skip with reason 'no file changes since last successful run' when cooldown expired and hash matches", async () => {
+    test("returns skip with reason 'no file changes since last run' when cooldown expired and hash matches", async () => {
         const matchedFile: ChangedFile = await writeChangedFile(tempArea, "src/foo.ts", "alpha");
         const prepared: CompiledCommand = makePrepared([matchedFile], "echo same", "/work", 60);
         const currentFilesHash: string = await aggregateHash(prepared.matchedFiles, {});

@@ -77,7 +77,9 @@ Each invocation has its own cooldown state, keyed by the resolved `(run, cwd)` p
 
 A command runs only when **both** conditions are met:
 - The cooldown has elapsed since the last run of that `(run, cwd)` pair
-- At least one matched file has changed since the last **successful** run (hash gate)
+- At least one matched file has changed since the last run (hash gate)
+
+A run is recorded on every outcome (pass, fail, or timeout). So a failing command whose matched files do not change is hash-gate skipped on the next Stop event instead of re-burning CPU; editing any matched file changes the aggregate hash and lets it run again.
 
 The hash gate applies even when `cooldown: "0s"`. To force a re-run, delete `.claude/claude-tools-runner/runs/` and `.claude/claude-tools-runner/hashes.yaml` (or the whole `.claude/claude-tools-runner/` directory — the plugin recreates it).
 

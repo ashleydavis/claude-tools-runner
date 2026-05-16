@@ -390,21 +390,22 @@ export async function runOneCommand(prepared: CompiledCommand, state: State, now
         logFile: auditLogFile,
     });
 
-    if (resultType === "PASS") {
-        upsertCommandRun(state, {
-            commandKey: prepared.commandKey,
-            expandedRun: prepared.expandedRun,
-            expandedCwd: prepared.expandedCwd,
-            sourceFile: prepared.sourceFile,
-            sourceLine: prepared.sourceLine,
-            lastRunAt: now.toISOString(),
-            lastFilesHash: gate.filesHash,
-            matchedFiles: prepared.matchedFiles.map(file => file.absPath).sort(),
-        });
-        // PASS narration is recorded in the audit log via `command_result`; stdout stays silent.
-    }
-    // FAIL narration is recorded in the audit log via `command_result` and re-emitted to stderr
-    // with the rest of the failed-command summary by `runStopHook`; stdout stays silent.
+    // Record the run regardless of outcome (PASS / FAIL / TIMEOUT). The cooldown and unchanged-files
+    // gates apply to *any* prior attempt, not just successful ones, so that a persistently failing
+    // command does not re-burn CPU on every Stop event while its matched files stay identical. A dev
+    // edit to a matched file changes the aggregate hash and lets the next Stop event run the command
+    // again. PASS/FAIL/TIMEOUT narration is recorded in the audit log via `command_result`; FAIL/TIMEOUT
+    // are additionally re-emitted to stderr with the failed-command summary by `runStopHook`.
+    upsertCommandRun(state, {
+        commandKey: prepared.commandKey,
+        expandedRun: prepared.expandedRun,
+        expandedCwd: prepared.expandedCwd,
+        sourceFile: prepared.sourceFile,
+        sourceLine: prepared.sourceLine,
+        lastRunAt: now.toISOString(),
+        lastFilesHash: gate.filesHash,
+        matchedFiles: prepared.matchedFiles.map(file => file.absPath).sort(),
+    });
 
     return {
         prepared,

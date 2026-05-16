@@ -125,12 +125,13 @@ export interface IAuditGateDecisionEntry extends IAuditEntryBase {
     expandedCwd: string;
     // SHA-256 hex digest of the matched files at gate-decision time.
     filesHash: string;
-    // Persisted hash from the previous successful run, if any. JSON consumers can use the
-    // present-but-different vs absent distinction to disambiguate `GATE_RUN` first-run from changed-run.
+    // Persisted hash from the previous run (any outcome: pass, fail, or timeout), if any. JSON consumers
+    // can use the present-but-different vs absent distinction to disambiguate `GATE_RUN` first-run from
+    // changed-run.
     lastFilesHash?: string;
     // Effective cooldown threshold in seconds (defaulted to 60 when the YAML did not specify one).
     cooldownSeconds: number;
-    // Wall-clock seconds elapsed since the previous successful run, if any.
+    // Wall-clock seconds elapsed since the previous run (any outcome), if any.
     elapsedSeconds?: number;
 }
 

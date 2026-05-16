@@ -17,14 +17,17 @@ export interface GateDecision {
 }
 
 // Decides whether `prepared` should run on this Stop event. The decision combines two gates:
-//   1. Cooldown: at least `command.cooldown` seconds must have elapsed since the last successful run.
+//   1. Cooldown: at least `command.cooldown` seconds must have elapsed since the last attempt.
 //   2. File-change: even after cooldown elapses, the aggregate hash of matched files must differ from the
-//      `lastFilesHash` recorded for the previous successful run.
-// The state is read but never mutated: `lastRunAt` and `lastFilesHash` are only ever updated by the runner
-// when the command actually executes successfully. A skipped Stop event leaves state untouched, so the
-// cooldown clock keeps ticking from the last *successful* run and is never extended by skipped events.
-// A malformed `lastRunAt` (i.e. one that does not parse via `Date.parse`) is treated as "no prior entry"
-// after writing one diagnostic line to stderr; this matches the recovery behaviour for a corrupt state file.
+//      `lastFilesHash` recorded for the previous attempt.
+// The state is read but never mutated: `lastRunAt` and `lastFilesHash` are updated by the runner whenever
+// the command actually executes (PASS, FAIL, or TIMEOUT). A gate-skipped Stop event leaves state untouched,
+// so the cooldown clock keeps ticking from the last attempt and is never extended by skipped events.
+// Recording on FAIL/TIMEOUT (not just PASS) is what keeps a persistently failing command from re-burning
+// CPU on every Stop event while its matched files stay identical; a dev edit changes the hash and lets the
+// next event run again. A malformed `lastRunAt` (i.e. one that does not parse via `Date.parse`) is treated
+// as "no prior entry" after writing one diagnostic line to stderr; this matches the recovery behaviour for
+// a corrupt state file.
 export async function decideGate(prepared: CompiledCommand, state: State, now: Date): Promise<GateDecision> {
     const filesHash: string = await aggregateHash(prepared.matchedFiles, state.fileHashes);
     const entry: CommandRunEntry | undefined = findCommandRun(state, prepared.commandKey);

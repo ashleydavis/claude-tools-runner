@@ -128,7 +128,7 @@ Every entry has `type: string` (literal discriminator) and `timestamp: string` (
 }
 ```
 
-**`gate_decision`** is logged once per `CompiledCommand` after `decideGate` resolves. `decision` is `"run"` or `"skip"`; `reason` is one of `first run`, `in cooldown`, `no file changes since last successful run`, `files changed since last run`. `lastFilesHash` and `elapsedSeconds` are omitted when there is no prior run.
+**`gate_decision`** is logged once per `CompiledCommand` after `decideGate` resolves. `decision` is `"run"` or `"skip"`; `reason` is one of `first run`, `in cooldown`, `no file changes since last run`, `files changed since last run`. `lastFilesHash` and `elapsedSeconds` are omitted when there is no prior run. A "prior run" here is *any* prior attempt — pass, fail, or timeout — so a failing command whose matched files do not change is hash-gate skipped on the next Stop event.
 
 ```json
 {

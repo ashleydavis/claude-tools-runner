@@ -115,7 +115,7 @@ triggers:
       - run: bun run test
 ```
 
-Whenever any `.ts` file under `src/` shows up in `git status`, `bun run test` runs once. For the next minute (the default `cooldown`), subsequent Stop events skip with `in cooldown`. After that, if the matched files are unchanged the run is skipped with `no file changes since last successful run`; if they've changed it runs again.
+Whenever any `.ts` file under `src/` shows up in `git status`, `bun run test` runs once. For the next minute (the default `cooldown`), subsequent Stop events skip with `in cooldown`. After that, if the matched files are unchanged the run is skipped with `no file changes since last run`; if they've changed it runs again. The hash gate applies to *any* prior attempt (pass, fail, or timeout), so a failing command does not re-burn CPU on every Stop event while its matched files stay identical — edit any matched file to force a retry.
 
 ### 2. Per-file linter using `${{file_path}}`
 

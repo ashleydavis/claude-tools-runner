@@ -175,7 +175,7 @@ interface CommandRunEntry {
     sourceFile: string;        // absolute path to the YAML config file that defined the trigger
     sourceLine: number;        // 1-based line number of the trigger inside sourceFile
     lastRunAt: string;         // ISO 8601, e.g. "2026-05-08T12:34:56.789Z"
-    lastFilesHash: string;     // aggregate SHA-256 of matched files at the time of last successful run
+    lastFilesHash: string;     // aggregate SHA-256 of matched files at the time of last run
     matchedFiles: string[];    // absolute paths; back-reference for fileHashes pruning
 }
 ```
@@ -203,12 +203,12 @@ Because the key is content-addressed, adding, removing, or reordering triggers i
 
 | Prior entry | Cooldown? | Hash match? | Decision | `lastRunAt` updated? |
 |---|---|---|---|---|
-| none | n/a | n/a | **run**, reason `first run` | yes (after success) |
+| none | n/a | n/a | **run**, reason `first run` | yes (after spawn) |
 | present | in cooldown | any | **skip**, reason `in cooldown` | no |
-| present | expired | same hash | **skip**, reason `no file changes since last successful run` | no |
-| present | expired | different hash | **run**, reason `files changed since last run` | yes (after success) |
+| present | expired | same hash | **skip**, reason `no file changes since last run` | no |
+| present | expired | different hash | **run**, reason `files changed since last run` | yes (after spawn) |
 
-`lastRunAt` only ever moves forward when the command actually runs, so its meaning stays plain: the wall-clock time of the most recent successful spawn. Cooldown is measured from that anchor and is never extended by Stop events that skip.
+`lastRunAt` only ever moves forward when the command actually spawns, so its meaning stays plain: the wall-clock time of the most recent attempt, regardless of whether that attempt passed, failed, or timed out. Recording on every outcome (not just success) is what keeps a persistently failing command from re-burning CPU on every Stop event while its matched files stay identical; a dev edit changes the hash and lets the next event run again. Cooldown is measured from `lastRunAt` and is never extended by Stop events that skip.
 
 A negative `elapsedMs` (clock went backwards or a test injected an earlier `now`) counts as in-cooldown. An unparseable `lastRunAt` is treated as if no prior entry existed, and one warning is logged to stderr.
 
@@ -247,7 +247,7 @@ Stop event 3 (t=50s, src/foo.ts still unchanged)
   changed: src/foo.ts
   filesHash=H1, inCooldown? elapsed=50, cooldown=30 → expired
   hash matches H1
-  → SKIP "no file changes since last successful run", lastRunAt unchanged
+  → SKIP "no file changes since last run", lastRunAt unchanged
 ```
 
 ## Audit log
